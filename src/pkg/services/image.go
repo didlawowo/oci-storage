@@ -98,6 +98,9 @@ func (s *ImageService) SaveImage(name, reference string, manifest *models.OCIMan
 
 	// Save metadata
 	metadataPath := s.getMetadataPath(name, reference)
+	if err := os.MkdirAll(filepath.Dir(metadataPath), 0755); err != nil {
+		s.log.WithError(err).Warn("Failed to create metadata directory")
+	}
 	metadataData, _ := json.MarshalIndent(metadata, "", "  ")
 	if err := os.WriteFile(metadataPath, metadataData, 0644); err != nil {
 		s.log.WithError(err).Warn("Failed to save metadata")

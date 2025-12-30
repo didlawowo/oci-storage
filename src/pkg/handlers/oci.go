@@ -262,13 +262,18 @@ func (h *OCIHandler) HandleManifest(c *fiber.Ctx) error {
 		return h.sendManifestResponse(c, manifestData, reference)
 	}
 
-	// Not found locally - try proxy if enabled (only for GET requests, not HEAD)
-	// HEAD requests are typically used by Docker client to check existence before push
-	// For push operations, we should return 404 to allow the push to proceed
-	if c.Method() == "GET" && h.proxyService != nil && h.proxyService.IsEnabled() {
+	// Not found locally - try proxy if enabled
+	// For GET requests: always try proxy for missing manifests (including by digest)
+	// For HEAD requests on tags: return 404 to allow push to proceed
+	// For HEAD requests on digests: try proxy (needed for multi-arch image pulls)
+	shouldProxy := h.proxyService != nil && h.proxyService.IsEnabled()
+	isDigestRef := strings.HasPrefix(reference, "sha256:")
+
+	if shouldProxy && (c.Method() == "GET" || (c.Method() == "HEAD" && isDigestRef)) {
 		h.log.WithFunc().WithFields(logrus.Fields{
 			"name":      name,
 			"reference": reference,
+			"method":    c.Method(),
 		}).Debug("Manifest not found locally, trying proxy")
 
 		return h.proxyManifest(c, name, reference)
@@ -303,11 +308,25 @@ func (h *OCIHandler) proxyManifest(c *fiber.Ctx, name, reference string) error {
 		return c.SendStatus(502)
 	}
 
-	// Cache locally (save manifest and update cache tracking)
-	go h.cacheManifest(name, reference, manifestData, registryURL, upstreamName)
+	// Calculate digest
+	digest := fmt.Sprintf("sha256:%x", sha256.Sum256(manifestData))
+
+	// Cache manifest as blob (for digest-based lookups of child manifests)
+	go func() {
+		blobPath := h.pathManager.GetBlobPath(digest)
+		if err := os.MkdirAll(filepath.Dir(blobPath), 0755); err == nil {
+			if err := os.WriteFile(blobPath, manifestData, 0644); err != nil {
+				h.log.WithError(err).Warn("Failed to cache manifest as blob")
+			}
+		}
+	}()
+
+	// Cache locally (save manifest and update cache tracking) - only for tag references
+	if !strings.HasPrefix(reference, "sha256:") {
+		go h.cacheManifest(name, reference, manifestData, registryURL, upstreamName)
+	}
 
 	// Return to client
-	digest := fmt.Sprintf("sha256:%x", sha256.Sum256(manifestData))
 	c.Set("Content-Type", contentType)
 	c.Set("Docker-Content-Digest", digest)
 
@@ -438,6 +457,12 @@ func (h *OCIHandler) findManifestByDigest(name, digest string) ([]byte, string, 
 	imageManifestsDir := filepath.Join(h.pathManager.GetBasePath(), "images", name, "manifests")
 	if data, path, err := h.searchDirForDigest(imageManifestsDir, digest); err == nil {
 		return data, path, nil
+	}
+
+	// Check if blob exists with this digest (some manifests are stored as blobs)
+	blobPath := h.pathManager.GetBlobPath(digest)
+	if data, err := os.ReadFile(blobPath); err == nil {
+		return data, blobPath, nil
 	}
 
 	return nil, "", fmt.Errorf("manifest with digest %s not found", digest)
