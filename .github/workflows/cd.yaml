@@ -9,8 +9,6 @@ on:
 jobs:
   build-and-update:
     runs-on: arc-runner-helm-portal
-    container:
-      image: gcr.io/kaniko-project/executor:debug
     permissions:
       contents: write
     steps:
@@ -18,29 +16,21 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Login to DockerHub
+        run: |
+          echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
+
       - name: Get repository name and SHA
         id: vars
         run: |
           REPO_NAME=$(echo "${{ github.repository }}" | cut -d'/' -f2 | tr '[:upper:]' '[:lower:]')
           echo "REPO_NAME=${REPO_NAME}" >> $GITHUB_OUTPUT
-          SHORT_SHA=$(cat .git/refs/heads/${GITHUB_REF#refs/heads/} 2>/dev/null | cut -c1-7 || echo "${GITHUB_SHA:0:7}")
-          echo "SHORT_SHA=${SHORT_SHA}" >> $GITHUB_OUTPUT
-        shell: sh
+          echo "SHORT_SHA=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
 
-      - name: Build and push with Kaniko
+      - name: Build and push Docker image
         run: |
-          # Create Docker config for authentication
-          mkdir -p /kaniko/.docker
-          echo "{\"auths\":{\"https://index.docker.io/v1/\":{\"auth\":\"$(echo -n '${{ secrets.DOCKER_USERNAME }}:${{ secrets.DOCKER_PASSWORD }}' | base64)\"}}}" > /kaniko/.docker/config.json
-
-          # Build and push
-          /kaniko/executor \
-            --context="${GITHUB_WORKSPACE}" \
-            --dockerfile="${GITHUB_WORKSPACE}/Dockerfile" \
-            --destination="${{ secrets.DOCKER_USERNAME }}/${{ steps.vars.outputs.REPO_NAME }}:${{ steps.vars.outputs.SHORT_SHA }}" \
-            --cache=true \
-            --cache-repo="${{ secrets.DOCKER_USERNAME }}/${{ steps.vars.outputs.REPO_NAME }}/cache"
-        shell: sh
+          docker build -t ${{ secrets.DOCKER_USERNAME }}/${{ steps.vars.outputs.REPO_NAME }}:${{ steps.vars.outputs.SHORT_SHA }} .
+          docker push ${{ secrets.DOCKER_USERNAME }}/${{ steps.vars.outputs.REPO_NAME }}:${{ steps.vars.outputs.SHORT_SHA }}
 
       - name: Update Helm values (main only)
         if: github.ref == 'refs/heads/main'
@@ -55,7 +45,6 @@ jobs:
 
           echo "Updated values.yaml:"
           cat helm/values.yaml
-        shell: sh
 
       - name: Commit and push changes (main only)
         if: github.ref == 'refs/heads/main'
@@ -65,4 +54,3 @@ jobs:
           git add helm/values.yaml
           git diff --staged --quiet || git commit -m "chore: update image tag to ${{ steps.vars.outputs.SHORT_SHA }}"
           git push
-        shell: sh
