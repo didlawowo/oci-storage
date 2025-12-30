@@ -33,7 +33,7 @@ func (h *ImageHandler) ListImages(c *fiber.Ctx) error {
 	images, err := h.service.ListImages()
 	if err != nil {
 		h.log.WithFunc().WithError(err).Error("Failed to list images")
-		return c.Status(500).JSON(fiber.Map{"error": "Failed to list images"})
+		return HTTPError(c, 500, "Failed to list images")
 	}
 
 	return c.JSON(fiber.Map{
@@ -50,7 +50,7 @@ func (h *ImageHandler) GetImageTags(c *fiber.Ctx) error {
 	tags, err := h.service.ListTags(name)
 	if err != nil {
 		h.log.WithFunc().WithError(err).Error("Failed to list tags")
-		return c.Status(500).JSON(fiber.Map{"error": "Failed to list tags"})
+		return HTTPError(c, 500, "Failed to list tags")
 	}
 
 	// Get metadata for each tag
@@ -87,7 +87,7 @@ func (h *ImageHandler) DisplayImageDetails(c *fiber.Ctx) error {
 	metadata, err := h.service.GetImageMetadata(name, tag)
 	if err != nil {
 		h.log.WithFunc().WithError(err).Error("Image not found")
-		return c.Status(404).JSON(fiber.Map{"error": "Image not found"})
+		return HTTPError(c, 404, "Image not found")
 	}
 
 	// Try to get config for more details
@@ -122,31 +122,12 @@ func (h *ImageHandler) DeleteImage(c *fiber.Ctx) error {
 
 	if err := h.service.DeleteImage(name, tag); err != nil {
 		h.log.WithFunc().WithError(err).Error("Failed to delete image")
-		return c.Status(500).JSON(fiber.Map{"error": "Failed to delete image"})
+		return HTTPError(c, 500, "Failed to delete image")
 	}
 
 	return c.JSON(fiber.Map{
 		"message": "Image deleted successfully",
 		"name":    name,
 		"tag":     tag,
-	})
-}
-
-// DisplayImagesHome displays the Docker images home page
-func (h *ImageHandler) DisplayImagesHome(c *fiber.Ctx) error {
-	h.log.WithFunc().Debug("Displaying images home")
-
-	images, err := h.service.ListImages()
-	if err != nil {
-		h.log.WithFunc().WithError(err).Error("Failed to list images")
-		return c.Status(500).Render("error", fiber.Map{
-			"Title": "Error",
-			"Error": "Failed to list images",
-		})
-	}
-
-	return c.Render("images", fiber.Map{
-		"Title":  "Docker Images",
-		"Images": images,
 	})
 }

@@ -56,7 +56,7 @@ func (h *CacheHandler) ListCachedImages(c *fiber.Ctx) error {
 	images, err := h.proxyService.GetCachedImages()
 	if err != nil {
 		h.log.WithFunc().WithError(err).Error("Failed to list cached images")
-		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		return HTTPError(c, 500, err.Error())
 	}
 
 	return c.JSON(fiber.Map{
@@ -72,12 +72,12 @@ func (h *CacheHandler) DeleteCachedImage(c *fiber.Ctx) error {
 	h.log.WithFunc().WithField("name", name).WithField("tag", tag).Debug("Deleting cached image")
 
 	if h.proxyService == nil || !h.proxyService.IsEnabled() {
-		return c.Status(400).JSON(fiber.Map{"error": "Proxy not enabled"})
+		return HTTPError(c, 400, "Proxy not enabled")
 	}
 
 	if err := h.proxyService.DeleteCachedImage(name, tag); err != nil {
 		h.log.WithFunc().WithError(err).Error("Failed to delete cached image")
-		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		return HTTPError(c, 500, err.Error())
 	}
 
 	return c.JSON(fiber.Map{
@@ -92,12 +92,12 @@ func (h *CacheHandler) PurgeCache(c *fiber.Ctx) error {
 	h.log.WithFunc().Info("Purging cache")
 
 	if h.proxyService == nil || !h.proxyService.IsEnabled() {
-		return c.Status(400).JSON(fiber.Map{"error": "Proxy not enabled"})
+		return HTTPError(c, 400, "Proxy not enabled")
 	}
 
 	if err := h.proxyService.EvictLRU(0); err != nil {
 		h.log.WithFunc().WithError(err).Error("Failed to purge cache")
-		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		return HTTPError(c, 500, err.Error())
 	}
 
 	return c.JSON(fiber.Map{

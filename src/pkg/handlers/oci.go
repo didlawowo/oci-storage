@@ -601,7 +601,7 @@ func (h *OCIHandler) PatchBlob(c *fiber.Ctx) error {
 
 	if len(c.Body()) == 0 {
 		h.log.WithFunc().Error("Received empty body")
-		return c.Status(400).JSON(fiber.Map{"error": "Empty body"})
+		return HTTPError(c, 400, "Empty body")
 	}
 
 	if err := os.WriteFile(tempPath, c.Body(), 0644); err != nil {
