@@ -3,11 +3,7 @@ package utils
 
 import (
 	"crypto/sha256"
-	"encoding/json"
 	"fmt"
-
-	"helm-portal/pkg/models"
-
 	"os"
 	"path/filepath"
 	"strings"
@@ -58,22 +54,42 @@ func (pm *PathManager) GetManifestPath(name, reference string) string {
 }
 
 func (pm *PathManager) GetChartPath(chartName string, reference string) string {
-	// Si c'est un digest SHA256
+	// Si c'est un digest SHA256, on doit trouver la version correspondante
 	if strings.HasPrefix(reference, "sha256:") {
-		// On cherche d'abord dans les manifests pour obtenir la version
-		manifestPath := filepath.Join(pm.baseStoragePath, "manifests", chartName)
-		manifestFile := filepath.Join(manifestPath, "0.2.0.json") // Pour le moment en dur
+		manifestsDir := filepath.Join(pm.baseStoragePath, "manifests", chartName)
 
-		// Lire le manifest
-		content, err := os.ReadFile(manifestFile)
-		if err == nil {
-			// Parse le json pour obtenir la version
-			var manifest models.OCIManifest // Ajoutez la structure OCIManifest
-			if err := json.Unmarshal(content, &manifest); err == nil {
-				// Utiliser la version du manifest plutôt que le digest
-				return filepath.Join(pm.baseStoragePath, "charts", fmt.Sprintf("%s-%s.tgz", chartName, "0.2.0"))
+		// Scanner tous les manifests pour trouver celui qui correspond au digest
+		files, err := os.ReadDir(manifestsDir)
+		if err != nil {
+			pm.log.WithError(err).Debug("Failed to read manifests directory")
+			return ""
+		}
+
+		for _, file := range files {
+			if file.IsDir() || !strings.HasSuffix(file.Name(), ".json") {
+				continue
+			}
+
+			manifestFile := filepath.Join(manifestsDir, file.Name())
+			content, err := os.ReadFile(manifestFile)
+			if err != nil {
+				continue
+			}
+
+			// Calculer le digest du manifest
+			currentDigest := fmt.Sprintf("sha256:%x", sha256.Sum256(content))
+			if currentDigest == reference {
+				// Extraire la version du nom de fichier (ex: "1.0.0.json" -> "1.0.0")
+				version := strings.TrimSuffix(file.Name(), ".json")
+				return filepath.Join(pm.baseStoragePath, "charts", fmt.Sprintf("%s-%s.tgz", chartName, version))
 			}
 		}
+
+		pm.log.WithFields(logrus.Fields{
+			"chartName": chartName,
+			"digest":    reference,
+		}).Debug("No manifest found for digest")
+		return ""
 	}
 
 	// Sinon c'est une version normale
@@ -81,27 +97,42 @@ func (pm *PathManager) GetChartPath(chartName string, reference string) string {
 }
 
 func (pm *PathManager) FindManifestByDigest(chartName string, digest string) string {
-	// Le manifest est toujours dans manifests/chartName/version.json
-	manifestPath := filepath.Join(pm.baseStoragePath, "manifests", chartName, "0.2.0.json")
+	manifestsDir := filepath.Join(pm.baseStoragePath, "manifests", chartName)
 
 	pm.log.WithFields(logrus.Fields{
-		"manifestPath": manifestPath,
+		"manifestsDir": manifestsDir,
 		"chartName":    chartName,
 		"digest":       digest,
-	}).Debug("Looking for manifest")
+	}).Debug("Looking for manifest by digest")
 
-	// Vérifier le digest
-	content, err := os.ReadFile(manifestPath)
+	// Scanner tous les manifests pour trouver celui qui correspond au digest
+	files, err := os.ReadDir(manifestsDir)
 	if err != nil {
-		pm.log.WithError(err).Error("Failed to read manifest")
+		pm.log.WithError(err).Debug("Failed to read manifests directory")
 		return ""
 	}
 
-	currentDigest := fmt.Sprintf("sha256:%x", sha256.Sum256(content))
-	if currentDigest == digest {
-		return manifestPath
+	for _, file := range files {
+		if file.IsDir() || !strings.HasSuffix(file.Name(), ".json") {
+			continue
+		}
+
+		manifestPath := filepath.Join(manifestsDir, file.Name())
+		content, err := os.ReadFile(manifestPath)
+		if err != nil {
+			continue
+		}
+
+		currentDigest := fmt.Sprintf("sha256:%x", sha256.Sum256(content))
+		if currentDigest == digest {
+			return manifestPath
+		}
 	}
 
+	pm.log.WithFields(logrus.Fields{
+		"chartName": chartName,
+		"digest":    digest,
+	}).Debug("No manifest found for digest")
 	return ""
 }
 
