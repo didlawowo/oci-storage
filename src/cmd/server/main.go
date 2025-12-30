@@ -71,8 +71,8 @@ func setupHTTPServer(app *fiber.App, log *utils.Logger) {
 func main() {
 	// Logger setup
 	logConfig := utils.Config{
-		LogLevel:  "debug", // ou depuis votre config
-		LogFormat: "json",  // ou "text"
+		LogLevel:  "info",
+		LogFormat: "text",
 		Pretty:    true,
 	}
 	log := utils.NewLogger(logConfig)
@@ -132,13 +132,17 @@ func main() {
 
 	// Middleware pour le logging
 	app.Use(func(c *fiber.Ctx) error {
+		// Health check en debug pour éviter le spam
+		if c.Path() == "/health" {
+			log.Debug("Health check")
+			return c.Next()
+		}
+
 		log.WithFields(logrus.Fields{
 			"path":   c.Path(),
 			"method": c.Method(),
 			"route":  c.Route().Path,
 			"params": c.AllParams(),
-
-			// "headers": c.GetReqHeaders(),
 		}).Info("Incoming request")
 
 		return c.Next()
