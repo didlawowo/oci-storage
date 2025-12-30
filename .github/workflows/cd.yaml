@@ -30,12 +30,17 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Get repository name and SHA
+      - name: Get repository name, SHA and version
         id: vars
         run: |
           REPO_NAME=$(echo "${{ github.repository }}" | cut -d'/' -f2 | tr '[:upper:]' '[:lower:]')
           echo "REPO_NAME=${REPO_NAME}" >> $GITHUB_OUTPUT
           echo "SHORT_SHA=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "FULL_SHA=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+          echo "BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_OUTPUT
+          # Get version from Chart.yaml appVersion
+          VERSION=$(grep '^appVersion:' helm/Chart.yaml | cut -d'"' -f2)
+          echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
@@ -44,6 +49,10 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ secrets.DOCKER_USERNAME }}/${{ steps.vars.outputs.REPO_NAME }}:${{ steps.vars.outputs.SHORT_SHA }}
+          build-args: |
+            VERSION=${{ steps.vars.outputs.VERSION }}
+            COMMIT=${{ steps.vars.outputs.FULL_SHA }}
+            BUILD_TIME=${{ steps.vars.outputs.BUILD_TIME }}
           cache-from: type=gha,scope=helm-portal
           cache-to: type=gha,mode=max,scope=helm-portal
 

@@ -9,8 +9,14 @@ RUN go mod download
 
 COPY src/ .
 
-# Build sans DataDog orchestrion
-RUN CGO_ENABLED=0 GOOS=linux go build -o helm-portal ./cmd/server/main.go
+# Build with version info injected via ldflags
+ARG VERSION=dev
+ARG COMMIT=unknown
+ARG BUILD_TIME=unknown
+
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -ldflags="-X helm-portal/pkg/version.Version=${VERSION} -X helm-portal/pkg/version.Commit=${COMMIT} -X helm-portal/pkg/version.BuildTime=${BUILD_TIME}" \
+    -o helm-portal ./cmd/server/main.go
 
 # Image finale
 FROM alpine:latest AS production

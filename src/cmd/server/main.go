@@ -1,13 +1,13 @@
 package main
 
 import (
-	"fmt"
 	"helm-portal/config"
 	"helm-portal/pkg/handlers"
 	"helm-portal/pkg/interfaces"
 	middleware "helm-portal/pkg/middlewares"
 	service "helm-portal/pkg/services"
 	"helm-portal/pkg/utils"
+	"helm-portal/pkg/version"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/template/html/v2"
@@ -69,9 +69,6 @@ func setupHTTPServer(app *fiber.App, log *utils.Logger) {
 }
 
 func main() {
-
-	fmt.Println("Application starting...")
-
 	// Logger setup
 	logConfig := utils.Config{
 		LogLevel:  "debug", // ou depuis votre config
@@ -79,6 +76,12 @@ func main() {
 		Pretty:    true,
 	}
 	log := utils.NewLogger(logConfig)
+
+	// Log version info at startup
+	log.WithFields(logrus.Fields{
+		"version": version.Version,
+		"commit":  version.Commit,
+	}).Info("Helm Portal starting")
 
 	// Configuration
 	cfg, err := config.LoadConfig("config/config.yaml")
