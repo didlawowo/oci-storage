@@ -117,6 +117,7 @@ func main() {
 		CaseSensitive: true,
 		StrictRouting: true,
 		ServerHeader:  "Helm Portal",
+		BodyLimit:     1024 * 1024 * 1024, // 1GB for large Docker image layers
 		Views:         html.New("./views", ".html"),
 
 		ErrorHandler: func(c *fiber.Ctx, err error) error {
