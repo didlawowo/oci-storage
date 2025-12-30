@@ -1,0 +1,106 @@
+// pkg/handlers/cache.go
+package handlers
+
+import (
+	"helm-portal/pkg/interfaces"
+	"helm-portal/pkg/utils"
+
+	"github.com/gofiber/fiber/v2"
+)
+
+// CacheHandler handles cache management HTTP requests
+type CacheHandler struct {
+	log          *utils.Logger
+	proxyService interfaces.ProxyServiceInterface
+}
+
+// NewCacheHandler creates a new cache handler
+func NewCacheHandler(proxyService interfaces.ProxyServiceInterface, log *utils.Logger) *CacheHandler {
+	return &CacheHandler{
+		proxyService: proxyService,
+		log:          log,
+	}
+}
+
+// GetCacheStatus returns cache statistics
+func (h *CacheHandler) GetCacheStatus(c *fiber.Ctx) error {
+	h.log.WithFunc().Debug("Getting cache status")
+
+	if h.proxyService == nil || !h.proxyService.IsEnabled() {
+		return c.JSON(fiber.Map{
+			"enabled": false,
+		})
+	}
+
+	state := h.proxyService.GetCacheState()
+
+	return c.JSON(fiber.Map{
+		"enabled":      true,
+		"totalSize":    state.TotalSize,
+		"maxSize":      state.MaxSize,
+		"itemCount":    state.ItemCount,
+		"usagePercent": state.UsagePercent,
+	})
+}
+
+// ListCachedImages returns all cached images with metadata
+func (h *CacheHandler) ListCachedImages(c *fiber.Ctx) error {
+	h.log.WithFunc().Debug("Listing cached images")
+
+	if h.proxyService == nil || !h.proxyService.IsEnabled() {
+		return c.JSON(fiber.Map{
+			"images": []interface{}{},
+		})
+	}
+
+	images, err := h.proxyService.GetCachedImages()
+	if err != nil {
+		h.log.WithFunc().WithError(err).Error("Failed to list cached images")
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	return c.JSON(fiber.Map{
+		"images": images,
+	})
+}
+
+// DeleteCachedImage removes a specific cached image
+func (h *CacheHandler) DeleteCachedImage(c *fiber.Ctx) error {
+	name := c.Params("name")
+	tag := c.Params("tag")
+
+	h.log.WithFunc().WithField("name", name).WithField("tag", tag).Debug("Deleting cached image")
+
+	if h.proxyService == nil || !h.proxyService.IsEnabled() {
+		return c.Status(400).JSON(fiber.Map{"error": "Proxy not enabled"})
+	}
+
+	if err := h.proxyService.DeleteCachedImage(name, tag); err != nil {
+		h.log.WithFunc().WithError(err).Error("Failed to delete cached image")
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	return c.JSON(fiber.Map{
+		"message": "Cached image deleted",
+		"name":    name,
+		"tag":     tag,
+	})
+}
+
+// PurgeCache clears all cached images
+func (h *CacheHandler) PurgeCache(c *fiber.Ctx) error {
+	h.log.WithFunc().Info("Purging cache")
+
+	if h.proxyService == nil || !h.proxyService.IsEnabled() {
+		return c.Status(400).JSON(fiber.Map{"error": "Proxy not enabled"})
+	}
+
+	if err := h.proxyService.EvictLRU(0); err != nil {
+		h.log.WithFunc().WithError(err).Error("Failed to purge cache")
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	return c.JSON(fiber.Map{
+		"message": "Cache purged",
+	})
+}

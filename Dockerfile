@@ -7,16 +7,10 @@ COPY src/go.mod src/go.sum ./
 # Télécharger les dépendances
 RUN go mod download
 
-# Installer orchestrion
-RUN go install github.com/DataDog/orchestrion@latest
-
 COPY src/ .
 
-# Exécuter orchestrion pin pour datadog APM
-RUN orchestrion pin
-
-# RUN CGO_ENABLED=0 GOOS=linux go build -o helm-portal ./cmd/server/main.go
-RUN orchestrion go build -o helm-portal ./cmd/server/main.go
+# Build sans DataDog orchestrion
+RUN CGO_ENABLED=0 GOOS=linux go build -o helm-portal ./cmd/server/main.go
 
 # Image finale
 FROM alpine:latest AS production

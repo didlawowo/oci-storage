@@ -15,7 +15,7 @@ import (
 )
 
 // setupServices initialise et configure tous les services
-func setupServices(cfg *config.Config, log *utils.Logger) (interfaces.ChartServiceInterface, interfaces.ImageServiceInterface, interfaces.IndexServiceInterface, *service.BackupService) {
+func setupServices(cfg *config.Config, log *utils.Logger) (interfaces.ChartServiceInterface, interfaces.ImageServiceInterface, interfaces.IndexServiceInterface, interfaces.ProxyServiceInterface, *service.BackupService) {
 
 	tmpChartService := service.NewChartService(cfg, log, nil)
 	indexService := service.NewIndexService(cfg, log, tmpChartService)
@@ -25,7 +25,15 @@ func setupServices(cfg *config.Config, log *utils.Logger) (interfaces.ChartServi
 	if err != nil {
 		log.WithFunc().WithError(err).Fatal("Failed to initialize backup service")
 	}
-	return finalChartService, imageService, indexService, backupService
+
+	// Initialize proxy service if enabled
+	var proxyService interfaces.ProxyServiceInterface
+	if cfg.Proxy.Enabled {
+		proxyService = service.NewProxyService(cfg, log)
+		log.Info("Proxy/cache service enabled")
+	}
+
+	return finalChartService, imageService, indexService, proxyService, backupService
 }
 
 // setupHandlers initialise tous les handlers
@@ -33,20 +41,22 @@ func setupHandlers(
 	chartService interfaces.ChartServiceInterface,
 	imageService interfaces.ImageServiceInterface,
 	_ interfaces.IndexServiceInterface,
+	proxyService interfaces.ProxyServiceInterface,
 	pathManager *utils.PathManager,
 	cfg *config.Config,
 	backupService *service.BackupService,
 	log *utils.Logger,
 
-) (*handlers.HelmHandler, *handlers.ImageHandler, *handlers.OCIHandler, *handlers.ConfigHandler, *handlers.IndexHandler, *handlers.BackupHandler) {
+) (*handlers.HelmHandler, *handlers.ImageHandler, *handlers.OCIHandler, *handlers.ConfigHandler, *handlers.IndexHandler, *handlers.BackupHandler, *handlers.CacheHandler) {
 	helmHandler := handlers.NewHelmHandler(chartService, pathManager, log)
 	imageHandler := handlers.NewImageHandler(imageService, pathManager, log)
-	ociHandler := handlers.NewOCIHandler(chartService, imageService, log)
+	ociHandler := handlers.NewOCIHandler(chartService, imageService, proxyService, cfg, log)
 	configHandler := handlers.NewConfigHandler(cfg, log)
 	indexHandler := handlers.NewIndexHandler(chartService, pathManager, log)
 	backupHandler := handlers.NewBackupHandler(backupService, log, cfg)
+	cacheHandler := handlers.NewCacheHandler(proxyService, log)
 
-	return helmHandler, imageHandler, ociHandler, configHandler, indexHandler, backupHandler
+	return helmHandler, imageHandler, ociHandler, configHandler, indexHandler, backupHandler, cacheHandler
 }
 
 func setupHTTPServer(app *fiber.App, log *utils.Logger) {
@@ -83,13 +93,14 @@ func main() {
 	pathManager := utils.NewPathManager(cfg.Storage.Path, log)
 
 	// Services
-	chartService, imageService, indexService, backupService := setupServices(cfg, log)
+	chartService, imageService, indexService, proxyService, backupService := setupServices(cfg, log)
 
 	// Handlers
-	helmHandler, imageHandler, ociHandler, configHandler, indexHandler, backupHandler := setupHandlers(
+	helmHandler, imageHandler, ociHandler, configHandler, indexHandler, backupHandler, cacheHandler := setupHandlers(
 		chartService,
 		imageService,
 		indexService,
+		proxyService,
 		pathManager,
 		cfg,
 		backupService,
@@ -171,9 +182,16 @@ func main() {
 	app.Post("/backup", backupHandler.HandleBackup)
 	app.Post("/restore", backupHandler.HandleRestore)
 
-	// Routes OCI
+	// Cache/Proxy management routes
+	app.Get("/cache/status", cacheHandler.GetCacheStatus)
+	app.Get("/cache/images", cacheHandler.ListCachedImages)
+	app.Delete("/cache/image/:name/:tag", cacheHandler.DeleteCachedImage)
+	app.Post("/cache/purge", cacheHandler.PurgeCache)
+
+	// Routes OCI - support nested paths like charts/myapp or images/myapp
 	ociGroup.Get("/", ociHandler.HandleOCIAPI)
 	ociGroup.Get("/_catalog", ociHandler.HandleCatalog)
+	// Single segment names (legacy)
 	ociGroup.Get("/:name/tags/list", ociHandler.HandleListTags)
 	ociGroup.Head("/:name/manifests/:reference", ociHandler.HandleManifest)
 	ociGroup.Get("/:name/manifests/:reference", ociHandler.HandleManifest)
@@ -184,6 +202,17 @@ func main() {
 	ociGroup.Put("/:name/blobs/uploads/:uuid", ociHandler.CompleteUpload)
 	ociGroup.Head("/:name/blobs/:digest", ociHandler.HeadBlob)
 	ociGroup.Get("/:name/blobs/:digest", ociHandler.GetBlob)
+	// Nested paths (charts/name or images/name)
+	ociGroup.Get("/:namespace/:name/tags/list", ociHandler.HandleListTagsNested)
+	ociGroup.Head("/:namespace/:name/manifests/:reference", ociHandler.HandleManifestNested)
+	ociGroup.Get("/:namespace/:name/manifests/:reference", ociHandler.HandleManifestNested)
+	ociGroup.Put("/:namespace/:name/manifests/:reference", ociHandler.PutManifestNested)
+	ociGroup.Put("/:namespace/:name/blobs/:digest", ociHandler.PutBlobNested)
+	ociGroup.Post("/:namespace/:name/blobs/uploads/", ociHandler.PostUploadNested)
+	ociGroup.Patch("/:namespace/:name/blobs/uploads/:uuid", ociHandler.PatchBlobNested)
+	ociGroup.Put("/:namespace/:name/blobs/uploads/:uuid", ociHandler.CompleteUploadNested)
+	ociGroup.Head("/:namespace/:name/blobs/:digest", ociHandler.HeadBlobNested)
+	ociGroup.Get("/:namespace/:name/blobs/:digest", ociHandler.GetBlobNested)
 
 	// Démarrage du serveur
 	port := ":3030"

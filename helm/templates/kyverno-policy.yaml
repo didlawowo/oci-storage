@@ -1,0 +1,41 @@
+{{- if .Values.kyverno.enabled }}
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: {{ .Values.fullnameOverride }}-image-rewrite
+  labels: {{- include "application.labels" . | nindent 4 }}
+  annotations:
+    policies.kyverno.io/title: Redirect Docker Images to OCI Portal
+    policies.kyverno.io/category: Best Practices
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/description: >-
+      This policy rewrites container image references to use the OCI Portal
+      as a pull-through cache proxy. Only pods with the annotation
+      'oci-portal: "true"' are affected.
+spec:
+  rules:
+    - name: rewrite-docker-io-images
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              annotations:
+                oci-portal: "true"
+      mutate:
+        foreach:
+          - list: "request.object.spec.containers"
+            patchStrategicMerge:
+              spec:
+                containers:
+                  - name: "{{ `{{element.name}}` }}"
+                    image: "{{ `{{regex_replace_all('^(docker\\.io/)?(.*)$', element.image, '` }}{{ .Values.kyverno.portalHost }}{{ `/\\2')}}` }}"
+          - list: "request.object.spec.initContainers"
+            patchStrategicMerge:
+              spec:
+                initContainers:
+                  - name: "{{ `{{element.name}}` }}"
+                    image: "{{ `{{regex_replace_all('^(docker\\.io/)?(.*)$', element.image, '` }}{{ .Values.kyverno.portalHost }}{{ `/\\2')}}` }}"
+{{- end }}

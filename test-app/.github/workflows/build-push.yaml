@@ -1,0 +1,66 @@
+name: Build and Push to Helm Portal
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'test-app/**'
+  workflow_dispatch:
+
+env:
+  REGISTRY: helm-portal.dc-tech.work
+  IMAGE_NAME: helm-portal-test-app
+  CHART_NAME: helm-portal-test-app
+
+jobs:
+  build-and-push:
+    runs-on: arc-runner-helm-portal
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set version
+        id: version
+        run: echo "version=1.0.$(date +%Y%m%d%H%M%S)" >> $GITHUB_OUTPUT
+
+      - name: Build Docker image
+        working-directory: test-app
+        run: |
+          docker build -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }} .
+          docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }} ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+      - name: Login to Helm Portal OCI Registry
+        run: |
+          echo "${{ secrets.HELM_PORTAL_PASSWORD }}" | docker login ${{ env.REGISTRY }} -u ${{ secrets.HELM_PORTAL_USERNAME }} --password-stdin
+
+      - name: Push Docker image
+        run: |
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: v3.13.0
+
+      - name: Package Helm chart
+        working-directory: test-app/helm
+        run: |
+          # Update chart version
+          sed -i "s/version: .*/version: ${{ steps.version.outputs.version }}/" Chart.yaml
+          sed -i "s/appVersion: .*/appVersion: \"${{ steps.version.outputs.version }}\"/" Chart.yaml
+          # Update image tag in values
+          sed -i "s/tag: .*/tag: \"${{ steps.version.outputs.version }}\"/" values.yaml
+          helm package .
+
+      - name: Push Helm chart to Helm Portal
+        working-directory: test-app/helm
+        run: |
+          helm registry login ${{ env.REGISTRY }} -u ${{ secrets.HELM_PORTAL_USERNAME }} -p ${{ secrets.HELM_PORTAL_PASSWORD }}
+          helm push ${{ env.CHART_NAME }}-${{ steps.version.outputs.version }}.tgz oci://${{ env.REGISTRY }}
+
+      - name: Output deployment info
+        run: |
+          echo "### Deployment Info" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image**: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Chart**: oci://${{ env.REGISTRY }}/${{ env.CHART_NAME }}:${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY

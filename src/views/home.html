@@ -138,13 +138,38 @@
 
         <!-- Docker Images Section -->
         <div id="imagesSection" style="display: none;">
+            <!-- Cache Status Bar -->
+            <div id="cacheStatusBar" class="mb-6 p-4 bg-gradient-to-r from-purple-50 to-blue-50 rounded-lg border border-purple-200">
+                <div class="flex justify-between items-center mb-2">
+                    <div class="flex items-center gap-2">
+                        <i class="material-icons text-purple-600">storage</i>
+                        <span class="font-semibold text-gray-700">Cache Status</span>
+                        <span id="cacheUsageText" class="text-sm text-gray-600">Loading...</span>
+                    </div>
+                    <div class="flex gap-2">
+                        <button onclick="purgeCache()" class="bg-red-500 text-white px-3 py-1 rounded text-sm hover:bg-red-600 flex items-center gap-1">
+                            <i class="material-icons text-sm">delete_sweep</i>
+                            Purge Cache
+                        </button>
+                    </div>
+                </div>
+                <div class="w-full bg-gray-200 rounded-full h-2.5">
+                    <div id="cacheProgressBar" class="bg-purple-600 h-2.5 rounded-full transition-all duration-300" style="width: 0%"></div>
+                </div>
+                <div class="mt-2 text-xs text-gray-500 flex justify-between">
+                    <span id="cacheItemCount">0 images cached</span>
+                    <span id="cacheProxyStatus">Proxy: checking...</span>
+                </div>
+            </div>
+
             <div id="imagesContainer" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                 <!-- Images loaded dynamically via JavaScript -->
             </div>
             <div id="noImagesMessage" class="flex flex-col items-center justify-center py-12" style="display: none;">
                 <i class="material-icons text-gray-400 text-6xl mb-4">inventory_2</i>
                 <h2 class="text-2xl font-bold text-gray-600">No Docker Images Available</h2>
-                <p class="text-gray-500 mt-2">Push an image using: <code class="bg-gray-200 px-2 py-1 rounded">docker push &lt;registry&gt;/&lt;image&gt;:&lt;tag&gt;</code></p>
+                <p class="text-gray-500 mt-2">Pull via proxy: <code class="bg-gray-200 px-2 py-1 rounded">docker pull &lt;portal&gt;/alpine:latest</code></p>
+                <p class="text-gray-500 mt-1">Or push directly: <code class="bg-gray-200 px-2 py-1 rounded">docker push &lt;portal&gt;/&lt;image&gt;:&lt;tag&gt;</code></p>
             </div>
         </div>
     </main>

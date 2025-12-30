@@ -257,8 +257,90 @@ function showTab(tab) {
         imagesSection.style.display = 'block';
         chartsTab.classList.remove('active', 'bg-blue-700');
         imagesTab.classList.add('active', 'bg-blue-700');
-        // Load images when switching to images tab
+        // Load images and cache status when switching to images tab
         loadDockerImages();
+        loadCacheStatus();
+    }
+}
+
+/**
+ * Load and display cache status
+ */
+async function loadCacheStatus() {
+    try {
+        const response = await fetch('/cache/status');
+        const data = await response.json();
+
+        const usageText = document.getElementById('cacheUsageText');
+        const progressBar = document.getElementById('cacheProgressBar');
+        const itemCount = document.getElementById('cacheItemCount');
+        const proxyStatus = document.getElementById('cacheProxyStatus');
+
+        if (!data.enabled) {
+            usageText.textContent = '(Proxy disabled)';
+            progressBar.style.width = '0%';
+            itemCount.textContent = 'Proxy not enabled';
+            proxyStatus.textContent = 'Proxy: disabled';
+            return;
+        }
+
+        // Format sizes
+        const formatSize = (bytes) => {
+            if (!bytes || bytes === 0) return '0 MB';
+            const mb = bytes / (1024 * 1024);
+            if (mb >= 1024) {
+                return (mb / 1024).toFixed(2) + ' GB';
+            }
+            return mb.toFixed(2) + ' MB';
+        };
+
+        const usedSize = formatSize(data.totalSize);
+        const maxSize = formatSize(data.maxSize);
+        const percent = data.usagePercent ? data.usagePercent.toFixed(1) : 0;
+
+        usageText.textContent = `${usedSize} / ${maxSize} (${percent}%)`;
+        progressBar.style.width = `${Math.min(percent, 100)}%`;
+        itemCount.textContent = `${data.itemCount || 0} images cached`;
+        proxyStatus.textContent = 'Proxy: enabled';
+
+        // Change color based on usage
+        progressBar.classList.remove('bg-purple-600', 'bg-yellow-500', 'bg-red-600');
+        if (percent > 90) {
+            progressBar.classList.add('bg-red-600');
+        } else if (percent > 70) {
+            progressBar.classList.add('bg-yellow-500');
+        } else {
+            progressBar.classList.add('bg-purple-600');
+        }
+
+    } catch (error) {
+        console.error('Error loading cache status:', error);
+        document.getElementById('cacheUsageText').textContent = '(Error loading)';
+    }
+}
+
+/**
+ * Purge the entire cache
+ */
+async function purgeCache() {
+    if (!confirm('Are you sure you want to purge the entire image cache? This cannot be undone.')) {
+        return;
+    }
+
+    try {
+        const response = await fetch('/cache/purge', { method: 'POST' });
+        const data = await response.json();
+
+        if (response.ok) {
+            showModal('Cache purged successfully', false);
+            loadDockerImages();
+            loadCacheStatus();
+        } else {
+            showModal('Error: ' + (data.error || 'Failed to purge cache'), true);
+        }
+    } catch (error) {
+        console.error('Error purging cache:', error);
+        showModal('Error purging cache: ' + error.message, true);
     }
 }
 

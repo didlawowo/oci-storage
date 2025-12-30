@@ -1,9 +1,14 @@
 package handlers
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io"
+	"time"
+
+	"helm-portal/config"
 	interfaces "helm-portal/pkg/interfaces"
 	"helm-portal/pkg/models"
 	utils "helm-portal/pkg/utils"
@@ -20,13 +25,23 @@ type OCIHandler struct {
 	log          *utils.Logger
 	chartService interfaces.ChartServiceInterface
 	imageService interfaces.ImageServiceInterface
+	proxyService interfaces.ProxyServiceInterface
 	pathManager  *utils.PathManager
+	config       *config.Config
 }
 
-func NewOCIHandler(chartService interfaces.ChartServiceInterface, imageService interfaces.ImageServiceInterface, log *utils.Logger) *OCIHandler {
+func NewOCIHandler(
+	chartService interfaces.ChartServiceInterface,
+	imageService interfaces.ImageServiceInterface,
+	proxyService interfaces.ProxyServiceInterface,
+	cfg *config.Config,
+	log *utils.Logger,
+) *OCIHandler {
 	return &OCIHandler{
 		chartService: chartService,
 		imageService: imageService,
+		proxyService: proxyService,
+		config:       cfg,
 		log:          log,
 		pathManager:  chartService.GetPathManager(),
 	}
@@ -43,26 +58,101 @@ func (h *OCIHandler) HandleOCIAPI(c *fiber.Ctx) error {
 
 func (h *OCIHandler) GetBlob(c *fiber.Ctx) error {
 	digest := c.Params("digest")
-	name := c.Params("name")
+	name := h.getName(c)
 
 	h.log.WithFunc().WithFields(logrus.Fields{
-		"chart":  name,
+		"name":   name,
 		"digest": digest,
 	}).Debug("Processing blob download request")
 
+	// Try local first
 	blobData, err := h.getBlobByDigest(digest)
-	if err != nil {
-		if os.IsNotExist(err) {
-			h.log.WithFunc().WithError(err).Debug("Blob not found")
-			return c.SendStatus(404)
-		}
-		h.log.WithFunc().WithError(err).Error("Failed to retrieve blob")
-		return c.SendStatus(500)
+	if err == nil {
+		c.Set("Docker-Content-Digest", digest)
+		c.Set("Content-Type", "application/octet-stream")
+		return c.Send(blobData)
 	}
 
+	// Not found locally - try proxy if enabled
+	if h.proxyService != nil && h.proxyService.IsEnabled() {
+		h.log.WithFunc().WithFields(logrus.Fields{
+			"name":   name,
+			"digest": digest,
+		}).Debug("Blob not found locally, trying proxy")
+
+		return h.proxyBlob(c, name, digest)
+	}
+
+	if os.IsNotExist(err) {
+		h.log.WithFunc().WithError(err).Debug("Blob not found")
+		return c.SendStatus(404)
+	}
+	h.log.WithFunc().WithError(err).Error("Failed to retrieve blob")
+	return c.SendStatus(500)
+}
+
+// proxyBlob fetches a blob from upstream and caches it while streaming to client
+func (h *OCIHandler) proxyBlob(c *fiber.Ctx, name, digest string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute) // Longer timeout for blobs
+	defer cancel()
+
+	// Resolve upstream registry
+	registryURL, upstreamName, err := h.proxyService.ResolveRegistry(name)
+	if err != nil {
+		h.log.WithError(err).Error("Failed to resolve registry for blob")
+		return c.SendStatus(404)
+	}
+
+	h.log.WithFunc().WithFields(logrus.Fields{
+		"registry":     registryURL,
+		"upstreamName": upstreamName,
+		"digest":       digest,
+	}).Debug("Fetching blob from upstream")
+
+	// Fetch from upstream
+	reader, size, err := h.proxyService.GetBlob(ctx, registryURL, upstreamName, digest)
+	if err != nil {
+		h.log.WithError(err).Error("Failed to fetch blob from upstream")
+		return c.SendStatus(502)
+	}
+	defer reader.Close()
+
+	// Prepare blob path for caching
+	blobPath := h.pathManager.GetBlobPath(digest)
+	if err := os.MkdirAll(filepath.Dir(blobPath), 0755); err != nil {
+		h.log.WithError(err).Warn("Failed to create blob directory")
+	}
+
+	// Create file for caching
+	file, err := os.Create(blobPath)
+	if err != nil {
+		h.log.WithError(err).Warn("Failed to create blob cache file, streaming without caching")
+		// Stream directly without caching
+		c.Set("Docker-Content-Digest", digest)
+		c.Set("Content-Type", "application/octet-stream")
+		if size > 0 {
+			c.Set("Content-Length", fmt.Sprintf("%d", size))
+		}
+		return c.SendStream(reader)
+	}
+	defer file.Close()
+
+	// Use TeeReader to cache while streaming
+	teeReader := io.TeeReader(reader, file)
+
+	// Set response headers
 	c.Set("Docker-Content-Digest", digest)
 	c.Set("Content-Type", "application/octet-stream")
-	return c.Send(blobData)
+	if size > 0 {
+		c.Set("Content-Length", fmt.Sprintf("%d", size))
+	}
+
+	h.log.WithFunc().WithFields(logrus.Fields{
+		"digest": digest,
+		"size":   size,
+	}).Info("Blob proxied and cached successfully")
+
+	return c.SendStream(teeReader)
 }
 
 func (h *OCIHandler) HandleCatalog(c *fiber.Ctx) error {
@@ -109,7 +199,7 @@ func (h *OCIHandler) HandleCatalog(c *fiber.Ctx) error {
 
 // HandleListTags returns all tags for a repository (OCI Distribution Spec)
 func (h *OCIHandler) HandleListTags(c *fiber.Ctx) error {
-	name := c.Params("name")
+	name := h.getName(c)
 
 	h.log.WithFunc().WithField("name", name).Debug("Processing tags list request")
 
@@ -148,7 +238,7 @@ func fileExists(path string) bool {
 }
 
 func (h *OCIHandler) HandleManifest(c *fiber.Ctx) error {
-	name := c.Params("name")
+	name := h.getName(c)
 	reference := c.Params("reference")
 
 	h.log.WithFunc().WithFields(logrus.Fields{
@@ -156,36 +246,137 @@ func (h *OCIHandler) HandleManifest(c *fiber.Ctx) error {
 		"reference": reference,
 	}).Debug("Processing manifest request")
 
-	// Try to find manifest in multiple locations
+	// Try to find manifest in local storage first
 	manifestData, manifestPath, err := h.findManifest(name, reference)
+	if err == nil {
+		h.log.WithFunc().WithFields(logrus.Fields{
+			"manifestPath": manifestPath,
+			"source":       "local",
+		}).Debug("Found manifest locally")
+
+		// Update cache access time if proxy is enabled
+		if h.proxyService != nil && h.proxyService.IsEnabled() {
+			h.proxyService.UpdateAccessTime(name, reference)
+		}
+
+		return h.sendManifestResponse(c, manifestData, reference)
+	}
+
+	// Not found locally - try proxy if enabled
+	if h.proxyService != nil && h.proxyService.IsEnabled() {
+		h.log.WithFunc().WithFields(logrus.Fields{
+			"name":      name,
+			"reference": reference,
+		}).Debug("Manifest not found locally, trying proxy")
+
+		return h.proxyManifest(c, name, reference)
+	}
+
+	h.log.WithFunc().WithError(err).Debug("Manifest not found")
+	return c.SendStatus(404)
+}
+
+// proxyManifest fetches a manifest from upstream and caches it
+func (h *OCIHandler) proxyManifest(c *fiber.Ctx, name, reference string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Resolve upstream registry
+	registryURL, upstreamName, err := h.proxyService.ResolveRegistry(name)
 	if err != nil {
-		h.log.WithFunc().WithError(err).Debug("Manifest not found")
+		h.log.WithError(err).Error("Failed to resolve registry")
 		return c.SendStatus(404)
 	}
 
 	h.log.WithFunc().WithFields(logrus.Fields{
-		"manifestPath": manifestPath,
-	}).Debug("Found manifest")
+		"registry":     registryURL,
+		"upstreamName": upstreamName,
+		"reference":    reference,
+	}).Debug("Fetching manifest from upstream")
 
-	// For HEAD requests, just verify existence
-	if c.Method() == "HEAD" {
-		digest := fmt.Sprintf("sha256:%x", sha256.Sum256(manifestData))
-		c.Set("Content-Type", "application/vnd.oci.image.manifest.v1+json")
-		c.Set("Docker-Content-Digest", digest)
-		c.Set("Content-Length", fmt.Sprintf("%d", len(manifestData)))
-		return c.SendStatus(200)
+	// Fetch from upstream
+	manifestData, contentType, err := h.proxyService.GetManifest(ctx, registryURL, upstreamName, reference)
+	if err != nil {
+		h.log.WithError(err).Error("Failed to fetch manifest from upstream")
+		return c.SendStatus(502)
 	}
 
-	// Verify digest if reference is a digest
-	if strings.HasPrefix(reference, "sha256:") {
-		currentDigest := fmt.Sprintf("sha256:%x", sha256.Sum256(manifestData))
-		if currentDigest != reference {
-			h.log.WithFunc().WithFields(logrus.Fields{
-				"expected": reference,
-				"got":      currentDigest,
-			}).Error("Manifest digest mismatch")
-			return c.SendStatus(404)
+	// Cache locally (save manifest and update cache tracking)
+	go h.cacheManifest(name, reference, manifestData, registryURL, upstreamName)
+
+	// Return to client
+	digest := fmt.Sprintf("sha256:%x", sha256.Sum256(manifestData))
+	c.Set("Content-Type", contentType)
+	c.Set("Docker-Content-Digest", digest)
+
+	if c.Method() == "HEAD" {
+		c.Set("Content-Length", fmt.Sprintf("%d", len(manifestData)))
+		return c.Status(200).Send(nil)
+	}
+
+	return c.Send(manifestData)
+}
+
+// cacheManifest saves a proxied manifest to local storage
+func (h *OCIHandler) cacheManifest(name, reference string, manifestData []byte, registryURL, upstreamName string) {
+	// Parse manifest to get size info
+	var manifest models.OCIManifest
+	if err := json.Unmarshal(manifestData, &manifest); err != nil {
+		h.log.WithError(err).Warn("Failed to parse manifest for caching")
+		return
+	}
+
+	// Save via image service
+	if h.imageService != nil {
+		if err := h.imageService.SaveImage(name, reference, &manifest); err != nil {
+			h.log.WithError(err).Warn("Failed to cache manifest via image service")
 		}
+	}
+
+	// Extract registry name for metadata
+	registryName := "docker.io"
+	for _, reg := range h.config.Proxy.Registries {
+		if reg.URL == registryURL {
+			registryName = reg.Name
+			break
+		}
+	}
+
+	// Add to cache tracking
+	cacheMetadata := models.CachedImageMetadata{
+		Name:           name,
+		Tag:            reference,
+		Digest:         fmt.Sprintf("sha256:%x", sha256.Sum256(manifestData)),
+		SourceRegistry: registryName,
+		OriginalRef:    upstreamName + ":" + reference,
+		Size:           manifest.GetTotalSize(),
+		CachedAt:       time.Now(),
+		LastAccessed:   time.Now(),
+		AccessCount:    1,
+	}
+
+	if err := h.proxyService.AddToCache(cacheMetadata); err != nil {
+		h.log.WithError(err).Warn("Failed to add to cache tracking")
+	}
+
+	h.log.WithFunc().WithFields(logrus.Fields{
+		"name":      name,
+		"reference": reference,
+		"registry":  registryName,
+	}).Info("Manifest cached successfully")
+}
+
+// sendManifestResponse sends a manifest response to the client
+func (h *OCIHandler) sendManifestResponse(c *fiber.Ctx, manifestData []byte, reference string) error {
+	digest := fmt.Sprintf("sha256:%x", sha256.Sum256(manifestData))
+
+	// Verify digest if reference is a digest
+	if strings.HasPrefix(reference, "sha256:") && digest != reference {
+		h.log.WithFunc().WithFields(logrus.Fields{
+			"expected": reference,
+			"got":      digest,
+		}).Error("Manifest digest mismatch")
+		return c.SendStatus(404)
 	}
 
 	// Determine content type from manifest
@@ -196,7 +387,14 @@ func (h *OCIHandler) HandleManifest(c *fiber.Ctx) error {
 		c.Set("Content-Type", "application/vnd.oci.image.manifest.v1+json")
 	}
 
-	c.Set("Docker-Content-Digest", fmt.Sprintf("sha256:%x", sha256.Sum256(manifestData)))
+	c.Set("Docker-Content-Digest", digest)
+
+	// For HEAD requests, just return metadata
+	if c.Method() == "HEAD" {
+		c.Set("Content-Length", fmt.Sprintf("%d", len(manifestData)))
+		return c.Status(200).Send(nil)
+	}
+
 	return c.Send(manifestData)
 }
 
@@ -315,7 +513,7 @@ func (h *OCIHandler) PutBlob(c *fiber.Ctx) error {
 }
 
 func (h *OCIHandler) PostUpload(c *fiber.Ctx) error {
-	name := c.Params("name")
+	name := h.getName(c)
 	uuid := generateUUID()
 
 	h.log.WithFunc().WithFields(logrus.Fields{
@@ -360,7 +558,7 @@ func (h *OCIHandler) PatchBlob(c *fiber.Ctx) error {
 }
 
 func (h *OCIHandler) CompleteUpload(c *fiber.Ctx) error {
-	name := c.Params("name")
+	name := h.getName(c)
 	uuid := c.Params("uuid")
 	digest := c.Query("digest")
 
@@ -394,39 +592,38 @@ func (h *OCIHandler) CompleteUpload(c *fiber.Ctx) error {
 
 func (h *OCIHandler) HeadBlob(c *fiber.Ctx) error {
 	digest := c.Params("digest")
-	name := c.Params("name")
+	name := h.getName(c)
 	blobPath := h.pathManager.GetBlobPath(digest)
 
 	h.log.WithFunc().WithFields(logrus.Fields{
-		"chart":  name,
+		"name":   name,
 		"digest": digest,
 		"path":   blobPath,
 	}).Debug("Processing HEAD request")
 
-	if _, err := os.Stat(blobPath); err != nil {
-		if os.IsNotExist(err) {
-			h.log.WithFunc().WithError(err).Debug("Blob not found")
-			return c.SendStatus(404)
-		}
-		h.log.WithFunc().WithError(err).Error("Failed to check blob")
-		return c.SendStatus(500)
-	}
-
+	// Check local first
 	info, err := os.Stat(blobPath)
-	if err != nil {
-		h.log.WithFunc().WithError(err).Error("Failed to get blob info")
-		return c.SendStatus(500)
+	if err == nil {
+		c.Set("Content-Length", fmt.Sprintf("%d", info.Size()))
+		c.Set("Docker-Content-Digest", digest)
+		c.Set("Content-Type", "application/octet-stream")
+		return c.SendStatus(200)
 	}
 
-	c.Set("Content-Length", fmt.Sprintf("%d", info.Size()))
-	c.Set("Docker-Content-Digest", digest)
-	c.Set("Content-Type", "application/octet-stream")
+	// Not found locally - for HEAD requests with proxy, we just return 404
+	// The actual blob will be fetched on GET request
+	// This is acceptable behavior for OCI registries
+	if os.IsNotExist(err) {
+		h.log.WithFunc().Debug("Blob not found locally")
+		return c.SendStatus(404)
+	}
 
-	return c.SendStatus(200)
+	h.log.WithFunc().WithError(err).Error("Failed to check blob")
+	return c.SendStatus(500)
 }
 
 func (h *OCIHandler) PutManifest(c *fiber.Ctx) error {
-	name := c.Params("name")
+	name := h.getName(c)
 	reference := c.Params("reference")
 
 	h.log.WithFunc().WithFields(logrus.Fields{
@@ -551,4 +748,66 @@ func (h *OCIHandler) saveManifestFile(manifestPath string, data []byte) error {
 	}
 
 	return nil
+}
+
+// Nested path handlers - combine namespace/name into single name parameter
+// These allow paths like /v2/charts/myapp/... or /v2/images/myapp/...
+
+func (h *OCIHandler) getNestedName(c *fiber.Ctx) string {
+	namespace := c.Params("namespace")
+	name := h.getName(c)
+	return namespace + "/" + name
+}
+
+// getName returns the repository name, checking Locals first (for nested paths) then Params
+func (h *OCIHandler) getName(c *fiber.Ctx) string {
+	if name := c.Locals("name"); name != nil {
+		return name.(string)
+	}
+	return c.Params("name")
+}
+
+func (h *OCIHandler) HandleListTagsNested(c *fiber.Ctx) error {
+	c.Locals("name", h.getNestedName(c))
+	return h.HandleListTags(c)
+}
+
+func (h *OCIHandler) HandleManifestNested(c *fiber.Ctx) error {
+	c.Locals("name", h.getNestedName(c))
+	return h.HandleManifest(c)
+}
+
+func (h *OCIHandler) PutManifestNested(c *fiber.Ctx) error {
+	c.Locals("name", h.getNestedName(c))
+	return h.PutManifest(c)
+}
+
+func (h *OCIHandler) PutBlobNested(c *fiber.Ctx) error {
+	c.Locals("name", h.getNestedName(c))
+	return h.PutBlob(c)
+}
+
+func (h *OCIHandler) PostUploadNested(c *fiber.Ctx) error {
+	c.Locals("name", h.getNestedName(c))
+	return h.PostUpload(c)
+}
+
+func (h *OCIHandler) PatchBlobNested(c *fiber.Ctx) error {
+	c.Locals("name", h.getNestedName(c))
+	return h.PatchBlob(c)
+}
+
+func (h *OCIHandler) CompleteUploadNested(c *fiber.Ctx) error {
+	c.Locals("name", h.getNestedName(c))
+	return h.CompleteUpload(c)
+}
+
+func (h *OCIHandler) HeadBlobNested(c *fiber.Ctx) error {
+	c.Locals("name", h.getNestedName(c))
+	return h.HeadBlob(c)
+}
+
+func (h *OCIHandler) GetBlobNested(c *fiber.Ctx) error {
+	c.Locals("name", h.getNestedName(c))
+	return h.GetBlob(c)
 }

@@ -1,6 +1,9 @@
 package interfaces
 
 import (
+	"context"
+	"io"
+
 	"helm-portal/pkg/models"
 	storage "helm-portal/pkg/utils"
 )
@@ -47,4 +50,30 @@ type IndexServiceInterface interface {
 	UpdateIndex() error
 	GetIndexPath() string
 	EnsureIndexExists() error
+}
+
+// ProxyServiceInterface handles Docker registry proxying and caching
+type ProxyServiceInterface interface {
+	// ResolveRegistry parses an image path and determines the upstream registry
+	ResolveRegistry(imagePath string) (registryURL string, imageName string, err error)
+	// GetDefaultRegistry returns the default upstream registry URL
+	GetDefaultRegistry() string
+	// GetManifest fetches a manifest from upstream registry
+	GetManifest(ctx context.Context, registryURL, name, reference string) ([]byte, string, error)
+	// GetBlob fetches a blob from upstream registry
+	GetBlob(ctx context.Context, registryURL, name, digest string) (io.ReadCloser, int64, error)
+	// GetCacheState returns the current cache state
+	GetCacheState() *models.CacheState
+	// GetCachedImages returns all cached images metadata
+	GetCachedImages() ([]models.CachedImageMetadata, error)
+	// UpdateAccessTime updates the last accessed time for a cached image
+	UpdateAccessTime(name, tag string)
+	// EvictLRU removes least recently used images until target size is reached
+	EvictLRU(targetBytes int64) error
+	// DeleteCachedImage removes a specific cached image
+	DeleteCachedImage(name, tag string) error
+	// AddToCache adds image metadata to the cache tracking
+	AddToCache(metadata models.CachedImageMetadata) error
+	// IsEnabled returns whether the proxy is enabled
+	IsEnabled() bool
 }

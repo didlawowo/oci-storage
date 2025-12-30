@@ -124,28 +124,30 @@ func (s *ImageService) ListImages() ([]models.ImageGroup, error) {
 
 	var allImages []models.ImageMetadata
 
-	// Read images directory
-	repos, err := os.ReadDir(imagesDir)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read images directory: %w", err)
-	}
-
-	for _, repo := range repos {
-		if !repo.IsDir() {
-			continue
+	// Walk the images directory recursively to find all tags directories
+	// This handles nested paths like library/alpine (docker.io official images)
+	err := filepath.Walk(imagesDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil // Skip errors and continue
 		}
 
-		repoName := repo.Name()
-		tagsDir := filepath.Join(imagesDir, repoName, "tags")
-
-		if _, err := os.Stat(tagsDir); os.IsNotExist(err) {
-			continue
+		// We're looking for "tags" directories
+		if !info.IsDir() || info.Name() != "tags" {
+			return nil
 		}
 
-		tags, err := os.ReadDir(tagsDir)
+		// Get the repository name by extracting the path between imagesDir and /tags
+		relPath, err := filepath.Rel(imagesDir, filepath.Dir(path))
+		if err != nil {
+			return nil
+		}
+		repoName := relPath
+
+		// Read tag files
+		tags, err := os.ReadDir(path)
 		if err != nil {
 			s.log.WithError(err).WithField("repo", repoName).Warn("Failed to read tags")
-			continue
+			return nil
 		}
 
 		for _, tagFile := range tags {
@@ -165,6 +167,12 @@ func (s *ImageService) ListImages() ([]models.ImageGroup, error) {
 
 			allImages = append(allImages, *metadata)
 		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to walk images directory: %w", err)
 	}
 
 	return models.GroupImagesByName(allImages), nil

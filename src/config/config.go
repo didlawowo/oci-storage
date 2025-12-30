@@ -36,6 +36,25 @@ type Backup struct {
 	} `yaml:"azure"`
 }
 
+// RegistryConfig defines an upstream registry for proxying
+type RegistryConfig struct {
+	Name    string `yaml:"name"`    // e.g., "docker.io", "ghcr.io"
+	URL     string `yaml:"url"`     // e.g., "https://registry-1.docker.io"
+	Default bool   `yaml:"default"` // Is this the default registry?
+}
+
+// CacheConfig defines cache settings for the proxy
+type CacheConfig struct {
+	MaxSizeGB int `yaml:"maxSizeGB"` // Maximum cache size in GB
+}
+
+// ProxyConfig groups proxy-related settings
+type ProxyConfig struct {
+	Enabled    bool             `yaml:"enabled"`
+	Cache      CacheConfig      `yaml:"cache"`
+	Registries []RegistryConfig `yaml:"registries"`
+}
+
 type Config struct {
 	Server struct {
 		Port int `yaml:"port"`
@@ -49,8 +68,9 @@ type Config struct {
 		Level  string `yaml:"level"`
 		Format string `yaml:"format"`
 	} `yaml:"logging"`
-	Auth   AuthConfig `yaml:"auth"`
-	Backup Backup     `yaml:"backup"`
+	Auth   AuthConfig  `yaml:"auth"`
+	Backup Backup      `yaml:"backup"`
+	Proxy  ProxyConfig `yaml:"proxy"`
 }
 
 type Secrets struct {
@@ -137,6 +157,16 @@ func loadConfigFromEnv(config *Config) {
 	}
 	if azureContainer := os.Getenv("AZURE_CONTAINER"); azureContainer != "" {
 		config.Backup.Azure.Container = azureContainer
+	}
+
+	// Proxy config
+	if proxyEnabled := os.Getenv("PROXY_ENABLED"); proxyEnabled != "" {
+		config.Proxy.Enabled = proxyEnabled == "true"
+	}
+	if cacheSize := os.Getenv("PROXY_CACHE_SIZE_GB"); cacheSize != "" {
+		if size, err := strconv.Atoi(cacheSize); err == nil {
+			config.Proxy.Cache.MaxSizeGB = size
+		}
 	}
 
 	// Load auth users from environment variables

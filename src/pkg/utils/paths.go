@@ -23,11 +23,12 @@ type PathManager struct {
 func NewPathManager(basePath string, log *Logger) *PathManager {
 	// Créer les dossiers nécessaires
 	dirs := []string{
-		"temp",     // Pour les uploads temporaires
-		"blobs",    // Pour les blobs (shared between charts and images)
-		"manifests", // Pour les manifests Helm
-		"charts",   // Pour les charts Helm
-		"images",   // Pour les images Docker
+		"temp",            // Pour les uploads temporaires
+		"blobs",           // Pour les blobs (shared between charts and images)
+		"manifests",       // Pour les manifests Helm
+		"charts",          // Pour les charts Helm
+		"images",          // Pour les images Docker
+		"cache/metadata",  // Pour les métadonnées du cache proxy
 	}
 
 	for _, dir := range dirs {
@@ -138,4 +139,24 @@ func (pm *PathManager) GetImageManifestPath(name, reference string) string {
 
 func (pm *PathManager) GetImageTagPath(name, tag string) string {
 	return filepath.Join(pm.baseStoragePath, "images", name, "tags", tag+".json")
+}
+
+// Cache path helpers for proxy functionality
+
+func (pm *PathManager) GetCachePath() string {
+	return filepath.Join(pm.baseStoragePath, "cache")
+}
+
+func (pm *PathManager) GetCacheMetadataPath() string {
+	return filepath.Join(pm.baseStoragePath, "cache", "metadata")
+}
+
+func (pm *PathManager) GetCacheStatePath() string {
+	return filepath.Join(pm.baseStoragePath, "cache", "state.json")
+}
+
+func (pm *PathManager) GetCachedImageMetadataPath(name, tag string) string {
+	// Replace / with _ for filesystem compatibility (library/alpine -> library_alpine)
+	safeName := strings.ReplaceAll(name, "/", "_")
+	return filepath.Join(pm.baseStoragePath, "cache", "metadata", safeName+"_"+tag+".json")
 }
