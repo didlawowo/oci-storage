@@ -782,8 +782,24 @@ func (h *OCIHandler) handleHelmChartManifest(name, reference string, manifest *m
 		return fmt.Errorf("failed to read chart data: %w", err)
 	}
 
-	// Save the chart
-	fileName := fmt.Sprintf("%s-%s.tgz", name, reference)
+	// Determine version: use reference if it's a tag, otherwise extract from Chart.yaml
+	version := reference
+	if strings.HasPrefix(reference, "sha256:") {
+		// Reference is a digest, extract version from Chart.yaml
+		metadata, err := h.chartService.ExtractChartMetadata(chartData)
+		if err != nil {
+			h.log.WithError(err).Warn("Failed to extract chart metadata, using digest")
+		} else {
+			version = metadata.Version
+			h.log.WithFields(logrus.Fields{
+				"extractedVersion": version,
+				"digest":           reference,
+			}).Debug("Extracted chart version from metadata")
+		}
+	}
+
+	// Save the chart with proper version
+	fileName := fmt.Sprintf("%s-%s.tgz", name, version)
 	if err := h.chartService.SaveChart(chartData, fileName); err != nil {
 		return fmt.Errorf("failed to save chart: %w", err)
 	}
