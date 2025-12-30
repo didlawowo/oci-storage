@@ -32,7 +32,22 @@ spec:
                 containers:
                   - name: "{{ `{{element.name}}` }}"
                     image: "{{ `{{regex_replace_all('^(docker\\.io/)?(.*)$', element.image, '` }}{{ .Values.kyverno.portalHost }}{{ `/\\2')}}` }}"
-          - list: "request.object.spec.initContainers || `[]`"
+    - name: rewrite-init-containers
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              annotations:
+                oci-portal: "true"
+      preconditions:
+        all:
+          - key: "{{ `{{request.object.spec.initContainers || '[]' | length(@)}}` }}"
+            operator: GreaterThan
+            value: 0
+      mutate:
+        foreach:
+          - list: "request.object.spec.initContainers"
             patchStrategicMerge:
               spec:
                 initContainers:
