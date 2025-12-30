@@ -8,7 +8,7 @@ on:
 
 jobs:
   build-and-update:
-    runs-on: arc-runner-set
+    runs-on: arc-runner-helm-portal
     permissions:
       contents: write
     steps:
