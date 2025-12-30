@@ -53,9 +53,9 @@ type IndexService struct {
 	chartService interfaces.ChartServiceInterface
 }
 
-// GetIndexPath implements IndexUpdater.
+// GetIndexPath returns the path to index.yaml
 func (s *IndexService) GetIndexPath() string {
-	panic("unimplemented")
+	return s.pathManager.GetIndexPath()
 }
 
 func NewIndexService(config *config.Config, log *utils.Logger, chartService interfaces.ChartServiceInterface) *IndexService {
