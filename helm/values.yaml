@@ -3,7 +3,7 @@ namespace: helm-portal
 podAnnotations: {}
 image:
   repository: fizzbuzz2/helm-portal
-  tag: "20efdbc"
+  tag: "1457956"
   pullPolicy: "Always"
   pullSecrets: []
 strategy:
@@ -176,10 +176,10 @@ externalSecrets:
   secrets: []
 # Kyverno policy for image rewriting
 kyverno:
-  enabled: false
+  enabled: true
   # The hostname of the OCI portal (without protocol)
   # e.g., "helm-portal.example.com" or "helm-portal:3030"
-  portalHost: "helm-portal.helm-portal.svc.cluster.local:3030"
+  portalHost: "helm-portal.dc-tech.work"
 
 config:
   server:
