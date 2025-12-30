@@ -266,7 +266,8 @@ func (h *OCIHandler) HandleManifest(c *fiber.Ctx) error {
 	// For GET requests: always try proxy for missing manifests (including by digest)
 	// For HEAD requests on tags: return 404 to allow push to proceed
 	// For HEAD requests on digests: try proxy (needed for multi-arch image pulls)
-	shouldProxy := h.proxyService != nil && h.proxyService.IsEnabled()
+	// NEVER proxy for "charts/" namespace - those are local Helm charts only
+	shouldProxy := h.proxyService != nil && h.proxyService.IsEnabled() && !strings.HasPrefix(name, "charts/")
 	isDigestRef := strings.HasPrefix(reference, "sha256:")
 
 	if shouldProxy && (c.Method() == "GET" || (c.Method() == "HEAD" && isDigestRef)) {
