@@ -144,42 +144,14 @@ func (pm *PathManager) GetChartsPath() string {
 	return filepath.Join(pm.baseStoragePath, "charts")
 }
 
-func (pm *PathManager) GetOCIRepositoryPath(name string) string {
-	return filepath.Join(pm.baseStoragePath, "oci", name)
-}
-
 func (pm *PathManager) GetIndexPath() string {
 	return filepath.Join(pm.baseStoragePath, "index.yaml")
-}
-
-// Docker image path helpers
-
-func (pm *PathManager) GetImagesPath() string {
-	return filepath.Join(pm.baseStoragePath, "images")
-}
-
-func (pm *PathManager) GetImagePath(name string) string {
-	return filepath.Join(pm.baseStoragePath, "images", name)
 }
 
 func (pm *PathManager) GetImageManifestPath(name, reference string) string {
 	// Replace : with _ for filesystem compatibility (sha256:xxx -> sha256_xxx)
 	safeRef := strings.ReplaceAll(reference, ":", "_")
 	return filepath.Join(pm.baseStoragePath, "images", name, "manifests", safeRef+".json")
-}
-
-func (pm *PathManager) GetImageTagPath(name, tag string) string {
-	return filepath.Join(pm.baseStoragePath, "images", name, "tags", tag+".json")
-}
-
-// Cache path helpers for proxy functionality
-
-func (pm *PathManager) GetCachePath() string {
-	return filepath.Join(pm.baseStoragePath, "cache")
-}
-
-func (pm *PathManager) GetCacheMetadataPath() string {
-	return filepath.Join(pm.baseStoragePath, "cache", "metadata")
 }
 
 func (pm *PathManager) GetCacheStatePath() string {

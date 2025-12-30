@@ -39,12 +39,6 @@ type ChartVersion struct {
 	URLs        []string  `yaml:"urls"`   // URLs de téléchargement
 }
 
-// ChartExtractor extrait les informations des charts
-type ChartExtractor struct {
-	pathManager *utils.PathManager
-	log         *utils.Logger
-}
-
 type IndexService struct {
 	pathManager  *utils.PathManager
 	config       *config.Config

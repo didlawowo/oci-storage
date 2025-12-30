@@ -23,14 +23,6 @@ type IndexHandler struct {
 	pathManager *utils.PathManager
 }
 
-type ErrorResponse struct {
-	Error string `json:"error"`
-}
-
-func sendError(c *fiber.Ctx, status int, message string) error {
-	return c.Status(status).JSON(ErrorResponse{Error: message})
-}
-
 func NewHelmHandler(service interfaces.ChartServiceInterface, pathManager *utils.PathManager, logger *utils.Logger) *HelmHandler {
 	return &HelmHandler{
 		service:     service,

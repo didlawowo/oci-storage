@@ -36,17 +36,6 @@ type OCIIndex struct {
 	Annotations   map[string]string `json:"annotations,omitempty"`
 }
 
-// IsImageManifest checks if this is a Docker/OCI image manifest
-func (m *OCIManifest) IsImageManifest() bool {
-	return m.Config.MediaType == MediaTypeDockerConfig ||
-		m.Config.MediaType == MediaTypeOCIConfig
-}
-
-// IsHelmChart checks if this is a Helm chart manifest
-func (m *OCIManifest) IsHelmChart() bool {
-	return m.Config.MediaType == MediaTypeHelmConfig
-}
-
 // GetTotalSize returns the total size of all layers
 func (m *OCIManifest) GetTotalSize() int64 {
 	var total int64
