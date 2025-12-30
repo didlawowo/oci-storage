@@ -262,8 +262,10 @@ func (h *OCIHandler) HandleManifest(c *fiber.Ctx) error {
 		return h.sendManifestResponse(c, manifestData, reference)
 	}
 
-	// Not found locally - try proxy if enabled
-	if h.proxyService != nil && h.proxyService.IsEnabled() {
+	// Not found locally - try proxy if enabled (only for GET requests, not HEAD)
+	// HEAD requests are typically used by Docker client to check existence before push
+	// For push operations, we should return 404 to allow the push to proceed
+	if c.Method() == "GET" && h.proxyService != nil && h.proxyService.IsEnabled() {
 		h.log.WithFunc().WithFields(logrus.Fields{
 			"name":      name,
 			"reference": reference,
