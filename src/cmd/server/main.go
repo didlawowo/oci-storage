@@ -69,11 +69,25 @@ func setupHTTPServer(app *fiber.App, log *utils.Logger) {
 }
 
 func main() {
-	// Logger setup
+	// Configuration - load first to get logging settings
+	cfg, err := config.LoadConfig("config/config.yaml")
+	if err != nil {
+		// Use a basic logger for startup errors
+		logrus.WithError(err).Fatal("Failed to load configuration")
+	}
+
+	// Logger setup from config
 	logConfig := utils.Config{
-		LogLevel:  "info",
-		LogFormat: "text",
+		LogLevel:  cfg.Logging.Level,
+		LogFormat: cfg.Logging.Format,
 		Pretty:    true,
+	}
+	// Default values if not set in config
+	if logConfig.LogLevel == "" {
+		logConfig.LogLevel = "info"
+	}
+	if logConfig.LogFormat == "" {
+		logConfig.LogFormat = "text"
 	}
 	log := utils.NewLogger(logConfig)
 
@@ -83,11 +97,6 @@ func main() {
 		"commit":  version.Commit,
 	}).Info("Helm Portal starting")
 
-	// Configuration
-	cfg, err := config.LoadConfig("config/config.yaml")
-	if err != nil {
-		log.WithError(err).Fatal("Failed to load configuration")
-	}
 	if err := config.LoadAuthFromFile(cfg); err != nil {
 		log.WithError(err).Fatal("Failed to load auth configuration")
 	}
