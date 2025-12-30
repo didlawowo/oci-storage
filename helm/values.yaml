@@ -198,3 +198,18 @@ config:
   logging:
     level: "info"
     format: "text"
+  # Docker registry proxy/cache configuration
+  proxy:
+    enabled: true
+    cache:
+      maxSizeGB: 10
+    registries:
+      - name: "docker.io"
+        url: "https://registry-1.docker.io"
+        default: true
+      - name: "ghcr.io"
+        url: "https://ghcr.io"
+      - name: "gcr.io"
+        url: "https://gcr.io"
+      - name: "quay.io"
+        url: "https://quay.io"
