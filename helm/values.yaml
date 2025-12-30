@@ -3,7 +3,7 @@ namespace: helm-portal
 podAnnotations: {}
 image:
   repository: fizzbuzz2/helm-portal
-  tag: "1457956"
+  tag: "14c0eef"
   pullPolicy: "Always"
   pullSecrets: []
 strategy:
@@ -18,6 +18,9 @@ autoscaling:
   maxReplicas: 10
   targetCPUUtilizationPercentage: 80
   targetMemoryUtilizationPercentage: 80
+pdb:
+  enabled: true
+  maxUnavailable: 1
 serviceAccount:
   create: true
   name: helm-portal
@@ -97,8 +100,8 @@ livenessProbe:
     scheme: HTTP
     path: /health
     port: 3030
-  initialDelaySeconds: 5
-  periodSeconds: 30
+  initialDelaySeconds: 2
+  periodSeconds: 10
   timeoutSeconds: 1
   successThreshold: 1
   failureThreshold: 3
@@ -107,9 +110,9 @@ readinessProbe:
     scheme: HTTP
     path: /health
     port: 3030
-  initialDelaySeconds: 5
-  periodSeconds: 30
-  timeoutSeconds: 3
+  initialDelaySeconds: 2
+  periodSeconds: 5
+  timeoutSeconds: 1
   successThreshold: 1
   failureThreshold: 3
 ingress:
