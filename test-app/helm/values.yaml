@@ -1,11 +1,16 @@
 replicaCount: 1
 
+# Enable Kyverno image rewriting to use OCI Portal proxy
+podAnnotations:
+  oci-portal: "true"
+
 imagePullSecrets:
   - name: helm-portal-registry
 
+# Use docker.io image - Kyverno will rewrite to helm-portal proxy
 image:
-  repository: helm-portal.dc-tech.work/images/test-app
-  tag: "1.0.0"
+  repository: nginx
+  tag: "alpine"
   pullPolicy: Always
 
 service:
