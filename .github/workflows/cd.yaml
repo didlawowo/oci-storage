@@ -3,80 +3,54 @@ name: Build and Update Helm Values
 on:
   push:
     branches:
-      - main # adjust this to your branch
+      - main
+      - feature/**
 
 jobs:
   build-and-update:
-    runs-on: ubuntu-latest
+    runs-on: arc-runner-set
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-        with:
-          platforms: linux/amd64,linux/arm64
-
       - name: Login to DockerHub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
+        run: |
+          echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
 
       - name: Get repository name and SHA
         id: vars
         run: |
-          REPO_NAME=$(echo "${{ github.repository }}" | cut -d'/' -f2 | tr '[:upper:]' '[:lower:]')           
-          echo "REPO_NAME=${REPO_NAME}" >> $GITHUB_OUTPUT           
+          REPO_NAME=$(echo "${{ github.repository }}" | cut -d'/' -f2 | tr '[:upper:]' '[:lower:]')
+          echo "REPO_NAME=${REPO_NAME}" >> $GITHUB_OUTPUT
           echo "SHORT_SHA=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
 
       - name: Build and push Docker image
-        uses: docker/build-push-action@v6
-        with:
-          sbom: true
-          provenance: mode=max
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ secrets.DOCKER_USERNAME }}/${{ steps.vars.outputs.REPO_NAME }}:${{ steps.vars.outputs.SHORT_SHA }}
-          context: .
-          cache-from: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/${{ steps.vars.outputs.REPO_NAME }}:buildcache
-          cache-to: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/${{ steps.vars.outputs.REPO_NAME }}:buildcache,mode=max
-
-      # Install yq
-      - name: Install yq
         run: |
-          wget https://github.com/mikefarah/yq/releases/download/v4.35.1/yq_linux_amd64 -O yq
-          chmod +x yq
-          sudo mv yq /usr/local/bin/
+          docker build -t ${{ secrets.DOCKER_USERNAME }}/${{ steps.vars.outputs.REPO_NAME }}:${{ steps.vars.outputs.SHORT_SHA }} .
+          docker push ${{ secrets.DOCKER_USERNAME }}/${{ steps.vars.outputs.REPO_NAME }}:${{ steps.vars.outputs.SHORT_SHA }}
 
-      - name: Update Helm values
+      - name: Update Helm values (main only)
+        if: github.ref == 'refs/heads/main'
         run: |
-          # Vérifier que le fichier existe
-          ls -la helm/
+          # Install yq
+          wget -q https://github.com/mikefarah/yq/releases/download/v4.35.1/yq_linux_amd64 -O /tmp/yq
+          chmod +x /tmp/yq
 
-          # Mettre à jour les valeurs
-          yq e -i '.image.repository = "${{ secrets.DOCKER_USERNAME }}/${{ steps.vars.outputs.REPO_NAME }}"' helm/values.yaml           
-          yq e -i '.image.tag = "${{ steps.vars.outputs.SHORT_SHA }}"' helm/values.yaml
+          # Update values
+          /tmp/yq e -i '.image.repository = "${{ secrets.DOCKER_USERNAME }}/${{ steps.vars.outputs.REPO_NAME }}"' helm/values.yaml
+          /tmp/yq e -i '.image.tag = "${{ steps.vars.outputs.SHORT_SHA }}"' helm/values.yaml
 
-          # Afficher le résultat pour vérification
-          echo "Updated values.yaml content:"
+          echo "Updated values.yaml:"
           cat helm/values.yaml
 
-      - name: Configure Git
+      - name: Commit and push changes (main only)
+        if: github.ref == 'refs/heads/main'
         run: |
-          git config user.name "GitHub Actions"           
+          git config user.name "GitHub Actions"
           git config user.email "github-actions@github.com"
-
-      - name: Commit and push changes
-        run: |
-          git status
           git add helm/values.yaml
-          git status
-          git commit -m "chore: update image tag to ${{ steps.vars.outputs.SHORT_SHA }}"
+          git diff --staged --quiet || git commit -m "chore: update image tag to ${{ steps.vars.outputs.SHORT_SHA }}"
           git push
