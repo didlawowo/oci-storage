@@ -340,15 +340,45 @@ func (h *OCIHandler) proxyManifest(c *fiber.Ctx, name, reference string) error {
 
 // cacheManifest saves a proxied manifest to local storage
 func (h *OCIHandler) cacheManifest(name, reference string, manifestData []byte, registryURL, upstreamName string) {
-	// Parse manifest to get size info
+	// Try parsing as regular manifest first
 	var manifest models.OCIManifest
+	var totalSize int64
+	isManifestList := false
+
 	if err := json.Unmarshal(manifestData, &manifest); err != nil {
-		h.log.WithError(err).Warn("Failed to parse manifest for caching")
-		return
+		// Try parsing as manifest list/index
+		var index models.OCIIndex
+		if indexErr := json.Unmarshal(manifestData, &index); indexErr != nil {
+			h.log.WithError(err).Warn("Failed to parse manifest for caching (neither manifest nor index)")
+			return
+		}
+		isManifestList = true
+		// For manifest lists, calculate size from child manifests
+		for _, m := range index.Manifests {
+			totalSize += m.Size
+		}
+		h.log.WithFields(logrus.Fields{
+			"name":      name,
+			"reference": reference,
+			"type":      "manifest_list",
+			"children":  len(index.Manifests),
+		}).Debug("Caching manifest list")
+
+		// Create a minimal manifest for image service to track the image
+		manifest = models.OCIManifest{
+			SchemaVersion: index.SchemaVersion,
+			MediaType:     index.MediaType,
+		}
+	} else {
+		totalSize = manifest.GetTotalSize()
 	}
 
-	// Save via image service
+	// Save via image service (for both regular manifests and manifest lists)
 	if h.imageService != nil {
+		// For manifest lists, set the size explicitly since GetTotalSize() returns 0
+		if isManifestList {
+			manifest.Config.Size = totalSize
+		}
 		if err := h.imageService.SaveImage(name, reference, &manifest); err != nil {
 			h.log.WithError(err).Warn("Failed to cache manifest via image service")
 		}
@@ -370,7 +400,7 @@ func (h *OCIHandler) cacheManifest(name, reference string, manifestData []byte, 
 		Digest:         fmt.Sprintf("sha256:%x", sha256.Sum256(manifestData)),
 		SourceRegistry: registryName,
 		OriginalRef:    upstreamName + ":" + reference,
-		Size:           manifest.GetTotalSize(),
+		Size:           totalSize,
 		CachedAt:       time.Now(),
 		LastAccessed:   time.Now(),
 		AccessCount:    1,
