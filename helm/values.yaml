@@ -7,10 +7,7 @@ image:
   pullPolicy: "Always"
   pullSecrets: []
 strategy:
-  type: RollingUpdate
-  rollingUpdate:
-    maxUnavailable: 25%
-    maxSurge: 25%
+  type: Recreate
 replicas: 1
 autoscaling:
   enabled: false
