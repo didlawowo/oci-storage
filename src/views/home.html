@@ -169,8 +169,8 @@
             <div id="noImagesMessage" class="flex flex-col items-center justify-center py-12" style="display: none;">
                 <i class="material-icons text-gray-400 text-6xl mb-4">inventory_2</i>
                 <h2 class="text-2xl font-bold text-gray-600">No Docker Images Available</h2>
-                <p class="text-gray-500 mt-2">Pull via proxy: <code class="bg-gray-200 px-2 py-1 rounded">docker pull &lt;portal&gt;/alpine:latest</code></p>
-                <p class="text-gray-500 mt-1">Or push directly: <code class="bg-gray-200 px-2 py-1 rounded">docker push &lt;portal&gt;/&lt;image&gt;:&lt;tag&gt;</code></p>
+                <p class="text-gray-500 mt-2">Pull via proxy: <code id="proxyPullExample" class="bg-gray-200 px-2 py-1 rounded">docker pull <span class="portal-host"></span>/proxy/docker.io/alpine:latest</code></p>
+                <p class="text-gray-500 mt-1">Or push directly: <code class="bg-gray-200 px-2 py-1 rounded">docker push <span class="portal-host"></span>/myimage:tag</code></p>
             </div>
         </div>
     </main>

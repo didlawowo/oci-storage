@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"helm-portal/config"
+	"helm-portal/pkg/models"
 	"helm-portal/pkg/utils"
 
 	"github.com/gofiber/fiber/v2"
@@ -399,4 +400,161 @@ func TestProxyServiceResolveRegistry(t *testing.T) {
 			assert.Equal(t, tt.expectedName, name)
 		})
 	}
+}
+
+// Tests for deep nested paths (3 segments: proxy/docker.io/nginx)
+func TestDeepNestedPath_3Segments_ProxyManifest(t *testing.T) {
+	app, _, mockImageService, mockProxyService, handler, _, cleanup := setupProxyTestEnv(t)
+	defer cleanup()
+
+	// Route for 3 segments: proxy/docker.io/nginx
+	app.Get("/v2/:ns1/:ns2/:name/manifests/:reference", handler.HandleManifestDeepNested)
+
+	upstreamManifest := []byte(`{"schemaVersion": 2}`)
+
+	// The full path "proxy/docker.io/nginx" should be assembled and resolved
+	mockProxyService.On("IsEnabled").Return(true)
+	mockProxyService.On("ResolveRegistry", "proxy/docker.io/nginx").Return("https://registry-1.docker.io", "library/nginx", nil)
+	mockProxyService.On("GetManifest", mock.Anything, "https://registry-1.docker.io", "library/nginx", "alpine").
+		Return(upstreamManifest, "application/vnd.oci.image.manifest.v1+json", nil)
+	mockProxyService.On("AddToCache", mock.Anything).Return(nil)
+	mockImageService.On("SaveImage", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	req := httptest.NewRequest("GET", "/v2/proxy/docker.io/nginx/manifests/alpine", nil)
+	resp, err := app.Test(req)
+
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	time.Sleep(100 * time.Millisecond)
+}
+
+func TestDeepNestedPath_3Segments_HeadManifest(t *testing.T) {
+	app, _, _, mockProxyService, handler, _, cleanup := setupProxyTestEnv(t)
+	defer cleanup()
+
+	app.Head("/v2/:ns1/:ns2/:name/manifests/:reference", handler.HandleManifestDeepNested)
+
+	upstreamManifest := []byte(`{"schemaVersion": 2}`)
+	digest := "sha256:abc123"
+
+	mockProxyService.On("IsEnabled").Return(true)
+	mockProxyService.On("ResolveRegistry", "proxy/docker.io/nginx").Return("https://registry-1.docker.io", "library/nginx", nil)
+	mockProxyService.On("GetManifest", mock.Anything, "https://registry-1.docker.io", "library/nginx", digest).
+		Return(upstreamManifest, "application/vnd.oci.image.manifest.v1+json", nil)
+
+	req := httptest.NewRequest("HEAD", "/v2/proxy/docker.io/nginx/manifests/"+digest, nil)
+	resp, err := app.Test(req)
+
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+}
+
+func TestDeepNestedPath_3Segments_GetBlob(t *testing.T) {
+	app, _, _, mockProxyService, handler, _, cleanup := setupProxyTestEnv(t)
+	defer cleanup()
+
+	app.Get("/v2/:ns1/:ns2/:name/blobs/:digest", handler.GetBlobDeepNested)
+
+	digest := "sha256:notfound123"
+
+	mockProxyService.On("IsEnabled").Return(true)
+	mockProxyService.On("ResolveRegistry", "proxy/docker.io/nginx").Return("https://registry-1.docker.io", "library/nginx", nil)
+	mockProxyService.On("GetBlob", mock.Anything, "https://registry-1.docker.io", "library/nginx", digest).
+		Return(nil, int64(0), io.EOF)
+
+	req := httptest.NewRequest("GET", "/v2/proxy/docker.io/nginx/blobs/"+digest, nil)
+	resp, err := app.Test(req)
+
+	assert.NoError(t, err)
+	assert.Equal(t, 502, resp.StatusCode)
+	mockProxyService.AssertCalled(t, "GetBlob", mock.Anything, "https://registry-1.docker.io", "library/nginx", digest)
+}
+
+// Tests for deep nested paths (4 segments: proxy/docker.io/library/nginx)
+func TestDeepNestedPath_4Segments_ProxyManifest(t *testing.T) {
+	app, _, mockImageService, mockProxyService, handler, _, cleanup := setupProxyTestEnv(t)
+	defer cleanup()
+
+	// Route for 4 segments: proxy/docker.io/library/nginx
+	app.Get("/v2/:ns1/:ns2/:ns3/:name/manifests/:reference", handler.HandleManifestDeepNested4)
+
+	upstreamManifest := []byte(`{"schemaVersion": 2}`)
+
+	// The full path "proxy/docker.io/library/nginx" should be assembled
+	mockProxyService.On("IsEnabled").Return(true)
+	mockProxyService.On("ResolveRegistry", "proxy/docker.io/library/nginx").Return("https://registry-1.docker.io", "library/nginx", nil)
+	mockProxyService.On("GetManifest", mock.Anything, "https://registry-1.docker.io", "library/nginx", "alpine").
+		Return(upstreamManifest, "application/vnd.oci.image.manifest.v1+json", nil)
+	mockProxyService.On("AddToCache", mock.Anything).Return(nil)
+	mockImageService.On("SaveImage", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	req := httptest.NewRequest("GET", "/v2/proxy/docker.io/library/nginx/manifests/alpine", nil)
+	resp, err := app.Test(req)
+
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	time.Sleep(100 * time.Millisecond)
+}
+
+func TestDeepNestedPath_4Segments_HeadManifest(t *testing.T) {
+	app, _, _, mockProxyService, handler, _, cleanup := setupProxyTestEnv(t)
+	defer cleanup()
+
+	app.Head("/v2/:ns1/:ns2/:ns3/:name/manifests/:reference", handler.HandleManifestDeepNested4)
+
+	upstreamManifest := []byte(`{"schemaVersion": 2}`)
+	digest := "sha256:abc123"
+
+	mockProxyService.On("IsEnabled").Return(true)
+	mockProxyService.On("ResolveRegistry", "proxy/docker.io/library/nginx").Return("https://registry-1.docker.io", "library/nginx", nil)
+	mockProxyService.On("GetManifest", mock.Anything, "https://registry-1.docker.io", "library/nginx", digest).
+		Return(upstreamManifest, "application/vnd.oci.image.manifest.v1+json", nil)
+
+	req := httptest.NewRequest("HEAD", "/v2/proxy/docker.io/library/nginx/manifests/"+digest, nil)
+	resp, err := app.Test(req)
+
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+}
+
+func TestDeepNestedPath_4Segments_GetBlob(t *testing.T) {
+	app, _, _, mockProxyService, handler, _, cleanup := setupProxyTestEnv(t)
+	defer cleanup()
+
+	app.Get("/v2/:ns1/:ns2/:ns3/:name/blobs/:digest", handler.GetBlobDeepNested4)
+
+	digest := "sha256:notfound123"
+
+	mockProxyService.On("IsEnabled").Return(true)
+	mockProxyService.On("ResolveRegistry", "proxy/docker.io/library/nginx").Return("https://registry-1.docker.io", "library/nginx", nil)
+	mockProxyService.On("GetBlob", mock.Anything, "https://registry-1.docker.io", "library/nginx", digest).
+		Return(nil, int64(0), io.EOF)
+
+	req := httptest.NewRequest("GET", "/v2/proxy/docker.io/library/nginx/blobs/"+digest, nil)
+	resp, err := app.Test(req)
+
+	assert.NoError(t, err)
+	assert.Equal(t, 502, resp.StatusCode)
+	mockProxyService.AssertCalled(t, "GetBlob", mock.Anything, "https://registry-1.docker.io", "library/nginx", digest)
+}
+
+func TestDeepNestedPath_4Segments_ListTags(t *testing.T) {
+	app, mockChartService, mockImageService, mockProxyService, handler, _, cleanup := setupProxyTestEnv(t)
+	defer cleanup()
+
+	app.Get("/v2/:ns1/:ns2/:ns3/:name/tags/list", handler.HandleListTagsDeepNested4)
+
+	mockProxyService.On("IsEnabled").Return(true)
+	// Mock ListTags to return empty list (no local tags)
+	mockImageService.On("ListTags", "proxy/docker.io/library/nginx").Return([]string{}, nil)
+	// Mock ListCharts to return empty slice (not nil - handler iterates over this)
+	mockChartService.On("ListCharts").Return([]models.ChartGroup{}, nil)
+
+	req := httptest.NewRequest("GET", "/v2/proxy/docker.io/library/nginx/tags/list", nil)
+	resp, err := app.Test(req)
+
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
 }

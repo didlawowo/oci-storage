@@ -484,6 +484,12 @@ async function deleteImage(name, tag) {
 document.addEventListener('DOMContentLoaded', function () {
     console.log('DOM loaded'); // Debug
 
+    // Set portal hostname dynamically in all .portal-host spans
+    const portalHost = window.location.host;
+    document.querySelectorAll('.portal-host').forEach(el => {
+        el.textContent = portalHost;
+    });
+
     // Vérifier le statut de la fonctionnalité de backup
     checkBackupStatus();
 

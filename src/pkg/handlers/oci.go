@@ -890,3 +890,60 @@ func (h *OCIHandler) GetBlobNested(c *fiber.Ctx) error {
 	c.Locals("name", h.getNestedName(c))
 	return h.GetBlob(c)
 }
+
+// Deep nested path handlers for 3 segments (e.g., proxy/docker.io/nginx)
+func (h *OCIHandler) getDeepNestedName(c *fiber.Ctx) string {
+	ns1 := c.Params("ns1")
+	ns2 := c.Params("ns2")
+	name := c.Params("name")
+	return ns1 + "/" + ns2 + "/" + name
+}
+
+func (h *OCIHandler) HandleListTagsDeepNested(c *fiber.Ctx) error {
+	c.Locals("name", h.getDeepNestedName(c))
+	return h.HandleListTags(c)
+}
+
+func (h *OCIHandler) HandleManifestDeepNested(c *fiber.Ctx) error {
+	c.Locals("name", h.getDeepNestedName(c))
+	return h.HandleManifest(c)
+}
+
+func (h *OCIHandler) HeadBlobDeepNested(c *fiber.Ctx) error {
+	c.Locals("name", h.getDeepNestedName(c))
+	return h.HeadBlob(c)
+}
+
+func (h *OCIHandler) GetBlobDeepNested(c *fiber.Ctx) error {
+	c.Locals("name", h.getDeepNestedName(c))
+	return h.GetBlob(c)
+}
+
+// Deep nested path handlers for 4 segments (e.g., proxy/docker.io/library/nginx)
+func (h *OCIHandler) getDeepNestedName4(c *fiber.Ctx) string {
+	ns1 := c.Params("ns1")
+	ns2 := c.Params("ns2")
+	ns3 := c.Params("ns3")
+	name := c.Params("name")
+	return ns1 + "/" + ns2 + "/" + ns3 + "/" + name
+}
+
+func (h *OCIHandler) HandleListTagsDeepNested4(c *fiber.Ctx) error {
+	c.Locals("name", h.getDeepNestedName4(c))
+	return h.HandleListTags(c)
+}
+
+func (h *OCIHandler) HandleManifestDeepNested4(c *fiber.Ctx) error {
+	c.Locals("name", h.getDeepNestedName4(c))
+	return h.HandleManifest(c)
+}
+
+func (h *OCIHandler) HeadBlobDeepNested4(c *fiber.Ctx) error {
+	c.Locals("name", h.getDeepNestedName4(c))
+	return h.HeadBlob(c)
+}
+
+func (h *OCIHandler) GetBlobDeepNested4(c *fiber.Ctx) error {
+	c.Locals("name", h.getDeepNestedName4(c))
+	return h.GetBlob(c)
+}

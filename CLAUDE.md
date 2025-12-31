@@ -56,7 +56,16 @@ Configuration supports environment variable overrides for server port and loggin
 
 Go tests use testify framework. Mock implementations are in `src/pkg/handlers/mocks.go`.
 
-Run tests with standard Go commands: `go test ./...`
+Run tests with standard Go commands:
+- `task test` - Run all Go tests
+- `task test-unit` - Run unit tests only (pkg/*)
+- `task test-auth` - Run authentication tests
+- `task test-proxy` - Run Docker proxy integration tests (requires running server)
+- `task test-proxy-ci` - Run proxy tests with configurable URL for CI
+
+For proxy tests, you can configure:
+- `PORTAL_URL` - Portal URL (default: http://localhost:3030)
+- `PORTAL_AUTH` - Auth credentials (default: admin:admin123)
 
 ## Key Technical Details
 

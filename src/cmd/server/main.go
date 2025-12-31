@@ -231,6 +231,20 @@ func main() {
 	ociGroup.Head("/:namespace/:name/blobs/:digest", ociHandler.HeadBlobNested)
 	ociGroup.Get("/:namespace/:name/blobs/:digest", ociHandler.GetBlobNested)
 
+	// Proxy paths with 3 segments (proxy/registry/image)
+	ociGroup.Get("/:ns1/:ns2/:name/tags/list", ociHandler.HandleListTagsDeepNested)
+	ociGroup.Head("/:ns1/:ns2/:name/manifests/:reference", ociHandler.HandleManifestDeepNested)
+	ociGroup.Get("/:ns1/:ns2/:name/manifests/:reference", ociHandler.HandleManifestDeepNested)
+	ociGroup.Head("/:ns1/:ns2/:name/blobs/:digest", ociHandler.HeadBlobDeepNested)
+	ociGroup.Get("/:ns1/:ns2/:name/blobs/:digest", ociHandler.GetBlobDeepNested)
+
+	// Proxy paths with 4 segments (proxy/registry/namespace/image) - e.g., proxy/docker.io/library/nginx
+	ociGroup.Get("/:ns1/:ns2/:ns3/:name/tags/list", ociHandler.HandleListTagsDeepNested4)
+	ociGroup.Head("/:ns1/:ns2/:ns3/:name/manifests/:reference", ociHandler.HandleManifestDeepNested4)
+	ociGroup.Get("/:ns1/:ns2/:ns3/:name/manifests/:reference", ociHandler.HandleManifestDeepNested4)
+	ociGroup.Head("/:ns1/:ns2/:ns3/:name/blobs/:digest", ociHandler.HeadBlobDeepNested4)
+	ociGroup.Get("/:ns1/:ns2/:ns3/:name/blobs/:digest", ociHandler.GetBlobDeepNested4)
+
 	// Démarrage du serveur
 	port := ":3030"
 	log.WithField("port", port).Info("Starting server")
