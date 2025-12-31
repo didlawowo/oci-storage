@@ -399,35 +399,35 @@ function createImageCard(imageGroup) {
 
     const tagsHtml = tags.length > 1
         ? `<select class="mt-2 text-sm border rounded p-1" onchange="switchImageTag('${name}', this.value)">
-             ${tags.map(t => `<option value="${t.Tag}">${t.Tag}</option>`).join('')}
+             ${tags.map(t => `<option value="${t.tag}">${t.tag}</option>`).join('')}
            </select>`
-        : `<p class="mt-2 text-sm text-gray-600">Tag: ${firstTag.Tag}</p>`;
+        : `<p class="mt-2 text-sm text-gray-600">Tag: ${firstTag.tag}</p>`;
 
     return `
         <div class="bg-white rounded-lg shadow-md p-6 flex flex-col h-[200px]" data-image-name="${name}">
             <div class="flex justify-between items-start mb-4">
                 <div>
                     <h2 class="text-lg font-bold text-purple-600">
-                        <a href="/image/${name}/${firstTag.Tag}/details">${name}</a>
+                        <a href="/image/${name}/${firstTag.tag}/details">${name}</a>
                     </h2>
                     ${tagsHtml}
                 </div>
                 <div class="flex gap-2">
-                    <a href="/image/${name}/${firstTag.Tag}/details" class="tooltip-trigger" data-tooltip="View image details">
+                    <a href="/image/${name}/${firstTag.tag}/details" class="tooltip-trigger" data-tooltip="View image details">
                         <i class="material-icons icon-info text-blue-500 hover:text-blue-700">info</i>
                     </a>
-                    <a href="#" onclick="deleteImage('${name}', '${firstTag.Tag}')" class="tooltip-trigger" data-tooltip="Delete this tag">
+                    <a href="#" onclick="deleteImage('${name}', '${firstTag.tag}')" class="tooltip-trigger" data-tooltip="Delete this tag">
                         <i class="material-icons icon-delete text-red-500 hover:text-red-700">delete</i>
                     </a>
                 </div>
             </div>
             <div class="flex-1 overflow-hidden">
                 <div class="text-sm text-gray-600 mb-2">
-                    <p><span class="font-semibold">Size:</span> ${formatSize(firstTag.Size)}</p>
-                    <p><span class="font-semibold">Layers:</span> ${firstTag.Layers ? firstTag.Layers.length : 'N/A'}</p>
+                    <p><span class="font-semibold">Size:</span> ${formatSize(firstTag.size)}</p>
+                    <p><span class="font-semibold">Layers:</span> ${firstTag.layers ? firstTag.layers.length : 'N/A'}</p>
                 </div>
                 <p class="text-gray-500 text-xs truncate">
-                    <span class="font-semibold">Digest:</span> ${firstTag.Digest ? firstTag.Digest.substring(0, 20) + '...' : 'N/A'}
+                    <span class="font-semibold">Digest:</span> ${firstTag.digest ? firstTag.digest.substring(0, 20) + '...' : 'N/A'}
                 </p>
             </div>
         </div>
