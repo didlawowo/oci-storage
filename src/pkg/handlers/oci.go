@@ -354,20 +354,27 @@ func (h *OCIHandler) proxyManifest(c *fiber.Ctx, name, reference string) error {
 
 // cacheManifest saves a proxied manifest to local storage
 func (h *OCIHandler) cacheManifest(name, reference string, manifestData []byte, registryURL, upstreamName string) {
-	// Try parsing as regular manifest first
 	var manifest models.OCIManifest
 	var totalSize int64
-	isManifestList := false
 
+	// First try parsing as manifest to check MediaType
 	if err := json.Unmarshal(manifestData, &manifest); err != nil {
-		// Try parsing as manifest list/index
+		h.log.WithError(err).Warn("Failed to parse manifest for caching")
+		return
+	}
+
+	// Check if this is a manifest list/index by MediaType
+	isManifestList := manifest.MediaType == models.MediaTypeOCIManifestList ||
+		manifest.MediaType == models.MediaTypeDockerManifestList
+
+	if isManifestList {
+		// Parse as index to get child manifest sizes
 		var index models.OCIIndex
-		if indexErr := json.Unmarshal(manifestData, &index); indexErr != nil {
-			h.log.WithError(err).Warn("Failed to parse manifest for caching (neither manifest nor index)")
+		if err := json.Unmarshal(manifestData, &index); err != nil {
+			h.log.WithError(err).Warn("Failed to parse manifest list")
 			return
 		}
-		isManifestList = true
-		// For manifest lists, calculate size from child manifests
+		// Calculate total size from child manifests
 		for _, m := range index.Manifests {
 			totalSize += m.Size
 		}
@@ -376,23 +383,16 @@ func (h *OCIHandler) cacheManifest(name, reference string, manifestData []byte, 
 			"reference": reference,
 			"type":      "manifest_list",
 			"children":  len(index.Manifests),
+			"totalSize": totalSize,
 		}).Debug("Caching manifest list")
-
-		// Create a minimal manifest for image service to track the image
-		manifest = models.OCIManifest{
-			SchemaVersion: index.SchemaVersion,
-			MediaType:     index.MediaType,
-		}
+		// Set the size in the manifest struct for SaveImage
+		manifest.Config.Size = totalSize
 	} else {
 		totalSize = manifest.GetTotalSize()
 	}
 
-	// Save via image service (for both regular manifests and manifest lists)
+	// Save via image service
 	if h.imageService != nil {
-		// For manifest lists, set the size explicitly since GetTotalSize() returns 0
-		if isManifestList {
-			manifest.Config.Size = totalSize
-		}
 		if err := h.imageService.SaveImage(name, reference, &manifest); err != nil {
 			h.log.WithError(err).Warn("Failed to cache manifest via image service")
 		}

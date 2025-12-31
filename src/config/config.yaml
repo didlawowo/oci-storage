@@ -15,7 +15,7 @@ backup:
   #   region: "eu-west-1"
 
 logging:
-  level: "info"
+  level: "debug"
   format: "text"
 
 # Docker registry proxy/cache configuration

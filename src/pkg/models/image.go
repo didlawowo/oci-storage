@@ -64,8 +64,8 @@ type LayerInfo struct {
 
 // ImageGroup groups images by repository name
 type ImageGroup struct {
-	Name string          // Repository name
-	Tags []ImageMetadata // List of available tags
+	Name string          `json:"name"` // Repository name
+	Tags []ImageMetadata `json:"tags"` // List of available tags
 }
 
 // GroupImagesByName groups images by their repository name

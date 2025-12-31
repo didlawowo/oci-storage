@@ -8,6 +8,9 @@ set -e
 PORTAL_URL="${PORTAL_URL:-http://localhost:3030}"
 AUTH="${PORTAL_AUTH:-admin:admin123}"
 TIMEOUT="${TIMEOUT:-120}"
+# Configurable test image (default: traefik:latest)
+TEST_IMAGE="${TEST_IMAGE:-traefik}"
+TEST_TAG="${TEST_TAG:-latest}"
 
 # Colors for output
 RED='\033[0;31m'
@@ -65,6 +68,7 @@ echo "  Helm Portal Proxy Test Suite"
 echo "========================================"
 echo ""
 log_info "Testing portal at: $PORTAL_URL"
+log_info "Test image: docker.io/${TEST_IMAGE}:${TEST_TAG}"
 echo ""
 
 # Wait for server if needed
@@ -99,23 +103,43 @@ test_endpoint "OCI catalog" "GET" "/v2/_catalog" "200"
 echo ""
 echo "--- Proxy Route Tests (3 segments: proxy/registry/image) ---"
 # These tests require actual upstream connectivity and may take time
-log_info "Testing 3-segment proxy paths..."
+log_info "Testing 3-segment proxy paths with ${TEST_IMAGE}..."
 # Note: HEAD with tag returns 404 (allows push), HEAD with digest would proxy
-test_endpoint "HEAD manifest 3seg with tag (expected 404 - allows push)" "HEAD" "/v2/proxy/docker.io/nginx/manifests/alpine" "404"
+test_endpoint "HEAD manifest 3seg with tag (expected 404 - allows push)" "HEAD" "/v2/proxy/docker.io/${TEST_IMAGE}/manifests/${TEST_TAG}" "404"
 
 echo ""
 echo "--- Proxy Route Tests (4 segments: proxy/registry/namespace/image) ---"
-log_info "Testing 4-segment proxy paths..."
+log_info "Testing 4-segment proxy paths with library/${TEST_IMAGE}..."
 # Note: HEAD with tag returns 404 (allows push), HEAD with digest would proxy
-test_endpoint "HEAD manifest 4seg with tag (expected 404 - allows push)" "HEAD" "/v2/proxy/docker.io/library/nginx/manifests/alpine" "404"
+test_endpoint "HEAD manifest 4seg with tag (expected 404 - allows push)" "HEAD" "/v2/proxy/docker.io/library/${TEST_IMAGE}/manifests/${TEST_TAG}" "404"
 
 # Optional: Test actual proxy GET (requires network access to Docker Hub)
 # These are slow and may timeout - skip in CI with SKIP_UPSTREAM_TESTS=1
 if [ "${SKIP_UPSTREAM_TESTS:-0}" != "1" ]; then
     echo ""
     echo "--- Upstream Proxy Tests (requires Docker Hub access) ---"
-    log_info "Testing upstream proxy (this may take a while)..."
-    test_endpoint "GET manifest via proxy (docker.io/nginx)" "GET" "/v2/proxy/docker.io/nginx/manifests/alpine" "200"
+    log_info "Testing upstream proxy with ${TEST_IMAGE}:${TEST_TAG} (this may take a while)..."
+    test_endpoint "GET manifest via proxy (docker.io/${TEST_IMAGE})" "GET" "/v2/proxy/docker.io/${TEST_IMAGE}/manifests/${TEST_TAG}" "200"
+
+    # Verify image shows up in /images endpoint with correct metadata
+    echo ""
+    log_info "Verifying image metadata..."
+    IMAGE_RESPONSE=$(curl -s -u "$AUTH" "${PORTAL_URL}/images" 2>/dev/null)
+
+    # Check if image name appears in response
+    if echo "$IMAGE_RESPONSE" | grep -q "proxy/docker.io/${TEST_IMAGE}"; then
+        log_pass "Image appears in /images endpoint"
+    else
+        log_fail "Image not found in /images endpoint"
+    fi
+
+    # Check if size is non-zero (verify size calculation fix)
+    SIZE=$(echo "$IMAGE_RESPONSE" | grep -o '"size":[0-9]*' | head -1 | cut -d: -f2)
+    if [ -n "$SIZE" ] && [ "$SIZE" != "0" ]; then
+        log_pass "Image size is non-zero: $SIZE bytes"
+    else
+        log_fail "Image size is zero or missing (size=$SIZE)"
+    fi
 else
     echo ""
     log_info "Skipping upstream proxy tests (SKIP_UPSTREAM_TESTS=1)"

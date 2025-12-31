@@ -381,8 +381,8 @@ async function loadDockerImages() {
  * @returns {string} HTML string for the image card
  */
 function createImageCard(imageGroup) {
-    const name = imageGroup.Name;
-    const tags = imageGroup.Tags || [];
+    const name = imageGroup.name;
+    const tags = imageGroup.tags || [];
     const firstTag = tags.length > 0 ? tags[0] : null;
 
     if (!firstTag) {
