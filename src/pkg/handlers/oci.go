@@ -800,7 +800,12 @@ func (h *OCIHandler) handleHelmChartManifest(name, reference string, manifest *m
 	}
 
 	// Save the chart with proper version
-	fileName := fmt.Sprintf("%s-%s.tgz", name, version)
+	// Extract just the chart name without namespace prefix (e.g., "charts/myapp" -> "myapp")
+	chartName := name
+	if idx := strings.LastIndex(name, "/"); idx != -1 {
+		chartName = name[idx+1:]
+	}
+	fileName := fmt.Sprintf("%s-%s.tgz", chartName, version)
 	if err := h.chartService.SaveChart(chartData, fileName); err != nil {
 		return fmt.Errorf("failed to save chart: %w", err)
 	}
