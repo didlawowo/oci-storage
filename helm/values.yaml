@@ -3,7 +3,7 @@ namespace: helm-portal
 podAnnotations: {}
 image:
   repository: fizzbuzz2/helm-portal
-  tag: "f68ff0f"
+  tag: "5d73fac"
   pullPolicy: "Always"
   pullSecrets: []
 strategy:

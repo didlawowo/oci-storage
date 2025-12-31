@@ -186,6 +186,19 @@ tasks:
     dir: tests
     cmds:
     - PORTAL_URL=${PORTAL_URL:-http://localhost:3030} PORTAL_AUTH=${PORTAL_AUTH:-admin:admin123} ./test-proxy.sh
+
+  test-e2e:
+    desc: Run full E2E tests (chart push/pull/delete, proxy with configurable image)
+    dir: tests
+    cmds:
+    - ./test-e2e.sh
+
+  test-e2e-ci:
+    desc: Run E2E tests for CI (configurable URL/image)
+    dir: tests
+    cmds:
+    - PORTAL_URL=${PORTAL_URL:-http://localhost:3030} PORTAL_AUTH=${PORTAL_AUTH:-admin:admin123} TEST_IMAGE=${TEST_IMAGE:-traefik} TEST_TAG=${TEST_TAG:-latest} ./test-e2e.sh
+
   # test-auth-workflow:
   #   desc: Test complete authentication workflow
   #   dir: src/testdata/charts
