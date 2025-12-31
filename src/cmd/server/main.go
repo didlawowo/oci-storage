@@ -64,7 +64,7 @@ func setupHTTPServer(app *fiber.App, log *utils.Logger) {
 	log.WithFunc().Info("🚀 Application starting")
 
 	if err := app.Listen(":3030"); err != nil {
-		log.WithFunc().Fatal("HTTP Server failed")
+		log.WithFunc().WithError(err).Fatal("HTTP Server failed")
 	}
 }
 

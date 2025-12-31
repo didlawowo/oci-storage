@@ -270,6 +270,15 @@ func (h *OCIHandler) HandleManifest(c *fiber.Ctx) error {
 	shouldProxy := h.proxyService != nil && h.proxyService.IsEnabled() && !strings.HasPrefix(name, "charts/")
 	isDigestRef := strings.HasPrefix(reference, "sha256:")
 
+	h.log.WithFunc().WithFields(logrus.Fields{
+		"shouldProxy":      shouldProxy,
+		"proxyServiceNil":  h.proxyService == nil,
+		"isEnabled":        h.proxyService != nil && h.proxyService.IsEnabled(),
+		"startsWithCharts": strings.HasPrefix(name, "charts/"),
+		"method":           c.Method(),
+		"isDigestRef":      isDigestRef,
+	}).Debug("Proxy decision")
+
 	if shouldProxy && (c.Method() == "GET" || (c.Method() == "HEAD" && isDigestRef)) {
 		h.log.WithFunc().WithFields(logrus.Fields{
 			"name":      name,
@@ -281,6 +290,10 @@ func (h *OCIHandler) HandleManifest(c *fiber.Ctx) error {
 	}
 
 	h.log.WithFunc().WithError(err).Debug("Manifest not found")
+	// For HEAD requests, send empty body to avoid Content-Length mismatch with curl
+	if c.Method() == "HEAD" {
+		return c.Status(404).Send(nil)
+	}
 	return c.SendStatus(404)
 }
 
@@ -420,6 +433,7 @@ func (h *OCIHandler) cacheManifest(name, reference string, manifestData []byte, 
 
 // sendManifestResponse sends a manifest response to the client
 func (h *OCIHandler) sendManifestResponse(c *fiber.Ctx, manifestData []byte, reference string) error {
+	h.log.WithFunc().WithField("dataLen", len(manifestData)).Debug("sendManifestResponse called")
 	digest := fmt.Sprintf("sha256:%x", sha256.Sum256(manifestData))
 
 	// Verify digest if reference is a digest

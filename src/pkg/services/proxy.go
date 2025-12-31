@@ -65,14 +65,30 @@ func (s *ProxyService) IsEnabled() bool {
 }
 
 // ResolveRegistry parses an image path and determines the upstream registry
+// Supports formats:
+//   - proxy/docker.io/nginx -> docker.io registry, library/nginx image
+//   - proxy/docker.io/library/nginx -> docker.io registry, library/nginx image
+//   - proxy/ghcr.io/org/image -> ghcr.io registry, org/image
+//   - docker.io/nginx -> docker.io registry, library/nginx image
+//   - nginx -> default registry, library/nginx image
 func (s *ProxyService) ResolveRegistry(imagePath string) (registryURL string, imageName string, err error) {
+	// Strip "proxy/" prefix if present
+	if strings.HasPrefix(imagePath, "proxy/") {
+		imagePath = strings.TrimPrefix(imagePath, "proxy/")
+	}
+
 	parts := strings.SplitN(imagePath, "/", 2)
 
 	// Check if first part matches a configured registry
 	for _, reg := range s.config.Proxy.Registries {
 		if parts[0] == reg.Name {
 			if len(parts) > 1 {
-				return reg.URL, parts[1], nil
+				finalImageName := parts[1]
+				// For Docker Hub, add library/ prefix for single-segment image names
+				if reg.Name == "docker.io" && !strings.Contains(finalImageName, "/") {
+					finalImageName = "library/" + finalImageName
+				}
+				return reg.URL, finalImageName, nil
 			}
 			return "", "", fmt.Errorf("invalid image path: %s", imagePath)
 		}
@@ -179,14 +195,23 @@ func (s *ProxyService) GetBlob(ctx context.Context, registryURL, name, digest st
 
 // fetchWithAuth handles Docker registry authentication flow
 func (s *ProxyService) fetchWithAuth(ctx context.Context, req *http.Request, registryURL, name string) (*http.Response, error) {
+	s.log.WithFields(logrus.Fields{
+		"url":    req.URL.String(),
+		"method": req.Method,
+	}).Debug("Making upstream request")
+
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
+		s.log.WithError(err).Error("Upstream request failed")
 		return nil, err
 	}
+
+	s.log.WithField("status", resp.StatusCode).Debug("Upstream response received")
 
 	// Handle 401 - need to get token
 	if resp.StatusCode == http.StatusUnauthorized {
 		resp.Body.Close()
+		s.log.Debug("Got 401, fetching auth token...")
 
 		wwwAuth := resp.Header.Get("Www-Authenticate")
 		token, err := s.getAnonymousToken(ctx, wwwAuth, name)
@@ -194,6 +219,7 @@ func (s *ProxyService) fetchWithAuth(ctx context.Context, req *http.Request, reg
 			return nil, fmt.Errorf("failed to get auth token: %w", err)
 		}
 
+		s.log.Debug("Token obtained, retrying request with auth")
 		// Retry with token
 		req.Header.Set("Authorization", "Bearer "+token)
 		return s.httpClient.Do(req)
