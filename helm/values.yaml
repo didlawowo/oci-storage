@@ -44,8 +44,8 @@ persistentVolumesClaims:
 - name: oci-storage-data
   accessModes:
   - ReadWriteOnce
-  storageClassName: default
-  size: 2Gi
+  storageClassName: longhorn
+  size: 20Gi
 application:
   ports:
   - name: http
