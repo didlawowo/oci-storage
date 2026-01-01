@@ -3,7 +3,7 @@ namespace: oci-storage
 podAnnotations: {}
 image:
   repository: fizzbuzz2/oci-storage
-  tag: "5d73fac"
+  tag: "a92b7c4"
   pullPolicy: "Always"
   pullSecrets: []
 strategy:
