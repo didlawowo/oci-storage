@@ -2,7 +2,7 @@ fullnameOverride: oci-storage
 namespace: oci-storage
 podAnnotations: {}
 image:
-  repository: fizzbuzz2/oci-storage
+  repository: fizzbuzz2/helm-portal
   tag: "a92b7c4"
   pullPolicy: "Always"
   pullSecrets: []
