@@ -8,7 +8,7 @@ on:
 
 jobs:
   build-and-update:
-    runs-on: arc-runner-helm-portal
+    runs-on: arc-runner-oci-storage
     permissions:
       contents: write
     steps:
@@ -53,8 +53,8 @@ jobs:
             VERSION=${{ steps.vars.outputs.VERSION }}
             COMMIT=${{ steps.vars.outputs.FULL_SHA }}
             BUILD_TIME=${{ steps.vars.outputs.BUILD_TIME }}
-          cache-from: type=gha,scope=helm-portal
-          cache-to: type=gha,mode=max,scope=helm-portal
+          cache-from: type=gha,scope=oci-storage
+          cache-to: type=gha,mode=max,scope=oci-storage
 
       - name: Update Helm values (main only)
         if: github.ref == 'refs/heads/main'

@@ -1,13 +1,13 @@
-module helm-portal-tests
+module oci-storage-tests
 
 go 1.24.0
 
-replace helm-portal => ../src
+replace oci-storage => ../src
 
 require (
 	github.com/gofiber/fiber/v2 v2.52.7
 	github.com/stretchr/testify v1.10.0
-	helm-portal v0.0.0-00010101000000-000000000000
+	oci-storage v0.0.0-00010101000000-000000000000
 )
 
 require (

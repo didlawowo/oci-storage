@@ -2,8 +2,8 @@
 package handlers
 
 import (
-	"helm-portal/pkg/interfaces"
-	"helm-portal/pkg/utils"
+	"oci-storage/pkg/interfaces"
+	"oci-storage/pkg/utils"
 
 	"github.com/gofiber/fiber/v2"
 )

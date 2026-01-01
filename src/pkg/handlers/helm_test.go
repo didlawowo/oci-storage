@@ -6,7 +6,7 @@ package handlers
 //     "mime/multipart"
 //     "net/http/httptest"
 //     "testing"
-//     "helm-portal/pkg/utils"
+//     "oci-storage/pkg/utils"
 //     "github.com/gofiber/fiber/v2"
 //     "github.com/stretchr/testify/assert"
 //     "github.com/stretchr/testify/mock"

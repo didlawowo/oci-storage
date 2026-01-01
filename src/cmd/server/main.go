@@ -1,13 +1,13 @@
 package main
 
 import (
-	"helm-portal/config"
-	"helm-portal/pkg/handlers"
-	"helm-portal/pkg/interfaces"
-	middleware "helm-portal/pkg/middlewares"
-	service "helm-portal/pkg/services"
-	"helm-portal/pkg/utils"
-	"helm-portal/pkg/version"
+	"oci-storage/config"
+	"oci-storage/pkg/handlers"
+	"oci-storage/pkg/interfaces"
+	middleware "oci-storage/pkg/middlewares"
+	service "oci-storage/pkg/services"
+	"oci-storage/pkg/utils"
+	"oci-storage/pkg/version"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/template/html/v2"

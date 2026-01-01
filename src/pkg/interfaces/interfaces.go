@@ -4,8 +4,8 @@ import (
 	"context"
 	"io"
 
-	"helm-portal/pkg/models"
-	storage "helm-portal/pkg/utils"
+	"oci-storage/pkg/models"
+	storage "oci-storage/pkg/utils"
 )
 
 type ChartServiceInterface interface {

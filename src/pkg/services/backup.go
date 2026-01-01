@@ -3,10 +3,10 @@ package service
 import (
 	"context"
 	"fmt"
-	cfg "helm-portal/config"
-	"helm-portal/pkg/utils"
 	"io"
 	"net/url"
+	cfg "oci-storage/config"
+	"oci-storage/pkg/utils"
 	"os"
 	"path/filepath"
 	"time"
@@ -24,12 +24,12 @@ import (
 )
 
 type BackupService struct {
-	pathManager      *utils.PathManager
-	config           *cfg.Config
-	log              *utils.Logger
-	awsSession       *session.Session
-	s3Client         *s3.S3
-	gcsClient        *gcs.Client
+	pathManager       *utils.PathManager
+	config            *cfg.Config
+	log               *utils.Logger
+	awsSession        *session.Session
+	s3Client          *s3.S3
+	gcsClient         *gcs.Client
 	azureContainerURL azblob.ContainerURL
 }
 
@@ -207,12 +207,12 @@ func (s *BackupService) initAzureClient(accountKey string) error {
 		// Tentative de création du container s'il n'existe pas
 		if storageErr, ok := err.(azblob.StorageError); ok && storageErr.ServiceCode() == azblob.ServiceCodeContainerNotFound {
 			s.log.WithFunc().WithField("container", s.config.Backup.Azure.Container).Info("Container does not exist, creating it")
-			
+
 			_, err = s.azureContainerURL.Create(ctx, azblob.Metadata{}, azblob.PublicAccessNone)
 			if err != nil {
 				return fmt.Errorf("failed to create container %s: %w", s.config.Backup.Azure.Container, err)
 			}
-			
+
 			s.log.WithFunc().WithField("container", s.config.Backup.Azure.Container).Info("Container created successfully")
 		} else {
 			return fmt.Errorf("failed to access Azure container %s: %w", s.config.Backup.Azure.Container, err)

@@ -1,34 +1,34 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: helm-portal-test-app
+  name: oci-storage-test-app
   namespace: kube-infra
   finalizers:
-    - resources-finalizer.argocd.argoproj.io
+  - resources-finalizer.argocd.argoproj.io
 spec:
   project: testing-apps
   source:
-    chart: helm-portal-test-app
-    repoURL: helm-portal.dc-tech.work
-    targetRevision: 1.0.2  # Using flat name until charts/ namespace is fixed
+    chart: oci-storage-test-app
+    repoURL: oci-storage.dc-tech.work
+    targetRevision: 1.0.2 # Using flat name until charts/ namespace is fixed
     helm:
-      releaseName: helm-portal-test-app
+      releaseName: oci-storage-test-app
       values: |
         replicaCount: 1
         imagePullSecrets:
-          - name: helm-portal-registry
+          - name: oci-storage-registry
         image:
-          repository: helm-portal.dc-tech.work/images/test-app
+          repository: oci-storage.dc-tech.work/images/test-app
           tag: "1.0.1"
           pullPolicy: Always
         nodeSelector:
           kubernetes.io/hostname: zima
   destination:
     server: https://kubernetes.default.svc
-    namespace: helm-portal-test
+    namespace: oci-storage-test
   syncPolicy:
     automated:
       prune: true
       selfHeal: true
     syncOptions:
-      - CreateNamespace=true
+    - CreateNamespace=true

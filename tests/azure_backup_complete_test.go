@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"helm-portal/config"
-	service "helm-portal/pkg/services"
-	"helm-portal/pkg/utils"
+	"oci-storage/config"
+	service "oci-storage/pkg/services"
+	"oci-storage/pkg/utils"
 
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
@@ -19,11 +19,11 @@ import (
 // AzureBackupTestSuite est une suite de tests pour Azure Backup
 type AzureBackupTestSuite struct {
 	suite.Suite
-	tempDir    string
-	config     *config.Config
-	logger     *utils.Logger
-	service    *service.BackupService
-	testFiles  map[string]string // nom -> contenu
+	tempDir   string
+	config    *config.Config
+	logger    *utils.Logger
+	service   *service.BackupService
+	testFiles map[string]string // nom -> contenu
 }
 
 // SetupSuite s'exécute une fois avant tous les tests de la suite
@@ -82,12 +82,12 @@ func (suite *AzureBackupTestSuite) SetupTest() {
 	// Créer les fichiers de test
 	for relPath, content := range suite.testFiles {
 		fullPath := filepath.Join(suite.tempDir, relPath)
-		
+
 		// Créer le répertoire parent si nécessaire
 		dir := filepath.Dir(fullPath)
 		err := os.MkdirAll(dir, 0755)
 		require.NoError(suite.T(), err)
-		
+
 		// Créer le fichier
 		err = ioutil.WriteFile(fullPath, []byte(content), 0644)
 		require.NoError(suite.T(), err)
@@ -118,7 +118,7 @@ func (suite *AzureBackupTestSuite) TestAzureBackupService_InitializationSuccess(
 		// L'erreur est attendue car nous ne nous connectons pas à un vrai Azure
 		suite.Contains(err.Error(), "failed to initialize Azure client")
 	}
-	
+
 	// Dans ce contexte, nil est acceptable
 	if backupService == nil {
 		suite.T().Log("Service is nil due to Azure connection failure (expected in test)")
@@ -198,10 +198,10 @@ func (suite *AzureBackupTestSuite) TestAzureBackupService_ConfigurationValidatio
 // TestAzureBackupService_ProviderSelection teste la sélection du bon provider
 func (suite *AzureBackupTestSuite) TestAzureBackupService_ProviderSelection() {
 	providers := []struct {
-		name      string
-		provider  string
-		awsBucket string
-		gcpBucket string
+		name           string
+		provider       string
+		awsBucket      string
+		gcpBucket      string
 		azureContainer string
 	}{
 		{
@@ -215,7 +215,7 @@ func (suite *AzureBackupTestSuite) TestAzureBackupService_ProviderSelection() {
 			awsBucket: "test-bucket",
 		},
 		{
-			name:      "GCP provider selected", 
+			name:      "GCP provider selected",
 			provider:  "gcp",
 			gcpBucket: "test-bucket",
 		},
@@ -225,14 +225,14 @@ func (suite *AzureBackupTestSuite) TestAzureBackupService_ProviderSelection() {
 		suite.Run(tt.name, func() {
 			testConfig := *suite.config
 			testConfig.Backup.Provider = tt.provider
-			
+
 			// Réinitialiser tous les providers
 			testConfig.Backup.AWS.Bucket = tt.awsBucket
 			testConfig.Backup.GCP.Bucket = tt.gcpBucket
 			testConfig.Backup.Azure.Container = tt.azureContainer
 
 			suite.Equal(tt.provider, testConfig.Backup.Provider)
-			
+
 			if tt.provider == "azure" {
 				suite.Equal(tt.azureContainer, testConfig.Backup.Azure.Container)
 				suite.Empty(testConfig.Backup.AWS.Bucket)
@@ -246,9 +246,9 @@ func (suite *AzureBackupTestSuite) TestAzureBackupService_ProviderSelection() {
 func (suite *AzureBackupTestSuite) TestAzureBackupService_PathManagerIntegration() {
 	// Tester que le PathManager utilise le bon chemin
 	pathManager := utils.NewPathManager(suite.config.Storage.Path, suite.logger)
-	
+
 	suite.Equal(suite.tempDir, pathManager.GetBasePath())
-	
+
 	// Vérifier que les fichiers de test sont accessible via PathManager
 	for relPath := range suite.testFiles {
 		fullPath := filepath.Join(pathManager.GetBasePath(), relPath)
@@ -277,7 +277,7 @@ func (suite *AzureBackupTestSuite) TestAzureBackupService_BackupDisabled() {
 	disabledConfig.Backup.Enabled = false
 
 	backupService, err := service.NewBackupService(&disabledConfig, suite.logger)
-	
+
 	// Quand le backup est désactivé, le service devrait retourner nil sans erreur
 	suite.Nil(err)
 	suite.Nil(backupService)
@@ -313,15 +313,15 @@ func (suite *AzureBackupTestSuite) TestAzureSecrets_EnvironmentVariables() {
 			os.Unsetenv("AWS_ACCESS_KEY_ID")
 			os.Unsetenv("AWS_SECRET_ACCESS_KEY")
 			os.Unsetenv("GCP_CREDENTIALS_FILE")
-			
+
 			// Définir la variable Azure
 			os.Setenv("AZURE_STORAGE_ACCOUNT_KEY", tt.envValue)
 			defer os.Unsetenv("AZURE_STORAGE_ACCOUNT_KEY")
 
 			secrets := config.LoadSecrets()
-			
+
 			suite.Equal(tt.expectValue, secrets.AzureStorageAccountKey)
-			
+
 			// Vérifier que les autres secrets sont vides
 			suite.Empty(secrets.AWSAccessKeyID)
 			suite.Empty(secrets.AWSSecretAccessKey)
@@ -341,7 +341,7 @@ func (suite *AzureBackupTestSuite) TestAzureBackupService_Concurrency() {
 			// Créer une configuration unique pour chaque goroutine
 			testConfig := *suite.config
 			testConfig.Backup.Azure.Container = fmt.Sprintf("test-container-%d", id)
-			
+
 			// Définir une clé unique
 			key := fmt.Sprintf("test-key-%d-12345678901234567890123456789012345678901234567890", id)
 			os.Setenv("AZURE_STORAGE_ACCOUNT_KEY", key)
@@ -368,7 +368,7 @@ func (suite *AzureBackupTestSuite) TestAzureBackupService_Concurrency() {
 
 	// Tous les appels devraient échouer de la même manière (connexion Azure)
 	suite.Len(errors, numGoroutines, "All calls should fail with Azure connection error")
-	
+
 	for _, err := range errors {
 		suite.Contains(err.Error(), "failed to initialize Azure client")
 	}

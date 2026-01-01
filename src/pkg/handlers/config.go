@@ -3,8 +3,8 @@
 package handlers
 
 import (
-	config "helm-portal/config"
-	utils "helm-portal/pkg/utils"
+	config "oci-storage/config"
+	utils "oci-storage/pkg/utils"
 
 	"github.com/gofiber/fiber/v2"
 )

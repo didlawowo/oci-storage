@@ -4,17 +4,17 @@ on:
   push:
     branches: [main]
     paths:
-      - 'test-app/**'
+      - "test-app/**"
   workflow_dispatch:
 
 env:
-  REGISTRY: helm-portal.dc-tech.work
-  IMAGE_NAME: helm-portal-test-app
-  CHART_NAME: helm-portal-test-app
+  REGISTRY: oci-storage.dc-tech.work
+  IMAGE_NAME: oci-storage-test-app
+  CHART_NAME: oci-storage-test-app
 
 jobs:
   build-and-push:
-    runs-on: arc-runner-helm-portal
+    runs-on: arc-runner-oci-storage
     steps:
       - name: Checkout
         uses: actions/checkout@v4

@@ -35,7 +35,7 @@ tasks:
   helm-install:
     desc: Deploy the helmchart
     cmds:
-    - helm upgrade --install helm-portal helm --namespace kube-infra --create-namespace -f helm/values/home/values.yaml
+    - helm upgrade --install oci-storage helm --namespace kube-infra --create-namespace -f helm/values/home/values.yaml
 
   test-upload-chart:
     desc: Test upload chart
@@ -123,31 +123,31 @@ tasks:
   create-auth-secret:
     desc: Create Kubernetes secret for authentication
     cmds:
-    - kubectl create secret generic helm-portal-auth --from-literal=HELM_USERS="admin:secret123,dev:devpass,readonly:readpass" --namespace=kube-infra --dry-run=client -o yaml | kubectl apply -f -
+    - kubectl create secret generic oci-storage-auth --from-literal=HELM_USERS="admin:secret123,dev:devpass,readonly:readpass" --namespace=kube-infra --dry-run=client -o yaml | kubectl apply -f -
 
   create-backup-secret:
     desc: Create Kubernetes secret for backup credentials (AWS example)
     cmds:
-    - kubectl create secret generic helm-portal-backup --from-literal=BACKUP_ENABLED="true" --from-literal=BACKUP_PROVIDER="aws" --from-literal=AWS_BUCKET="helm-portal-backup" --from-literal=AWS_REGION="eu-west-1" --from-literal=AWS_ACCESS_KEY_ID="YOUR_ACCESS_KEY" --from-literal=AWS_SECRET_ACCESS_KEY="YOUR_SECRET_KEY" --namespace=kube-infra --dry-run=client -o yaml | kubectl apply -f -
+    - kubectl create secret generic oci-storage-backup --from-literal=BACKUP_ENABLED="true" --from-literal=BACKUP_PROVIDER="aws" --from-literal=AWS_BUCKET="oci-storage-backup" --from-literal=AWS_REGION="eu-west-1" --from-literal=AWS_ACCESS_KEY_ID="YOUR_ACCESS_KEY" --from-literal=AWS_SECRET_ACCESS_KEY="YOUR_SECRET_KEY" --namespace=kube-infra --dry-run=client -o yaml | kubectl apply -f -
 
   create-backup-secret-gcp:
     desc: Create Kubernetes secret for backup credentials (GCP example)
     cmds:
-    - kubectl create secret generic helm-portal-backup --from-literal=BACKUP_ENABLED="true" --from-literal=BACKUP_PROVIDER="gcp" --from-literal=GCP_BUCKET="helm-portal-backup" --from-literal=GCP_PROJECT_ID="your-project-id" --from-file=GCP_CREDENTIALS_FILE="/path/to/service-account.json" --namespace=kube-infra --dry-run=client -o yaml | kubectl apply -f -
+    - kubectl create secret generic oci-storage-backup --from-literal=BACKUP_ENABLED="true" --from-literal=BACKUP_PROVIDER="gcp" --from-literal=GCP_BUCKET="oci-storage-backup" --from-literal=GCP_PROJECT_ID="your-project-id" --from-file=GCP_CREDENTIALS_FILE="/path/to/service-account.json" --namespace=kube-infra --dry-run=client -o yaml | kubectl apply -f -
 
   delete-secrets:
-    desc: Delete all helm-portal secrets
+    desc: Delete all oci-storage secrets
     cmds:
-    - kubectl delete secret helm-portal-auth helm-portal-backup --namespace=kube-infra --ignore-not-found=true
+    - kubectl delete secret oci-storage-auth oci-storage-backup --namespace=kube-infra --ignore-not-found=true
 
   show-secrets:
     desc: Show current secrets (base64 decoded)
     cmds:
     - echo "=== Auth Secret ==="
-    - kubectl get secret helm-portal-auth --namespace=kube-infra -o yaml || echo "Secret not found"
+    - kubectl get secret oci-storage-auth --namespace=kube-infra -o yaml || echo "Secret not found"
     - echo ""
     - echo "=== Backup Secret ==="
-    - kubectl get secret helm-portal-backup --namespace=kube-infra -o yaml || echo "Secret not found"
+    - kubectl get secret oci-storage-backup --namespace=kube-infra -o yaml || echo "Secret not found"
 
   test-helm-login:
     desc: Test Helm login to local registry
@@ -198,7 +198,6 @@ tasks:
     dir: tests
     cmds:
     - PORTAL_URL=${PORTAL_URL:-http://localhost:3030} PORTAL_AUTH=${PORTAL_AUTH:-admin:admin123} TEST_IMAGE=${TEST_IMAGE:-traefik} TEST_TAG=${TEST_TAG:-latest} ./test-e2e.sh
-
   # test-auth-workflow:
   #   desc: Test complete authentication workflow
   #   dir: src/testdata/charts

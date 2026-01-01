@@ -88,7 +88,7 @@ auth:
 
 1. Créer de nouveaux fichiers `*_test.go` dans ce répertoire
 2. Utiliser le package `tests`
-3. Importer le module principal : `helm-portal`
+3. Importer le module principal : `oci-storage`
 4. Suivre les conventions de test Go
 5. Ajouter les commandes au `taskfile.yaml` si nécessaire
 
@@ -96,7 +96,7 @@ auth:
 
 - `github.com/gofiber/fiber/v2` - Framework web
 - `github.com/stretchr/testify` - Assertions et mocks
-- `helm-portal` - Module principal (via replace directive)
+- `oci-storage` - Module principal (via replace directive)
 
 ## Module Séparé
 

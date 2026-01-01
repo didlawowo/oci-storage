@@ -13,9 +13,9 @@ import (
 
 	"strings"
 
-	"helm-portal/config"
-	"helm-portal/pkg/models"
-	utils "helm-portal/pkg/utils"
+	"oci-storage/config"
+	"oci-storage/pkg/models"
+	utils "oci-storage/pkg/utils"
 
 	"github.com/sirupsen/logrus"
 	"gopkg.in/yaml.v2"

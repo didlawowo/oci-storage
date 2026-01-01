@@ -1,12 +1,12 @@
 persistentVolumesClaims:
-- name: helm-portal-data
+- name: oci-storage-data
   accessModes:
   - ReadWriteOnce
   storageClassName: longhorn
   size: 2Gi
 
 ingress:
-  host: helm-portal.dc-tech.work
+  host: oci-storage.dc-tech.work
   tls:
     enabled: true
     secretName: "wildcard-dc"
@@ -19,14 +19,14 @@ env:
 - name: LOG_LEVEL
   value: "info"
 - name: LOG_FORMAT
-  value: "text"  # "text" avec couleurs ou "json"
+  value: "text" # "text" avec couleurs ou "json"
 # Auth configuration - Option 1: Variable unique avec liste
 - name: HELM_USERS
   value: "admin:secret123,dev:devpass,readonly:readpass"
 
 # envFrom:
 # - secretRef:
-#   name: helm-portal-backup
+#   name: oci-storage-backup
 
 config:
   server:
@@ -37,10 +37,10 @@ config:
     enabled: false
     provider: "gcp" # "aws" ou "gcp"
     gcp:
-      bucket: "helm-portal-backup"
+      bucket: "oci-storage-backup"
       projectID: "dc-consulting-home"
     # aws:
-    #   bucket: "helm-portal-backup"
+    #   bucket: "oci-storage-backup"
     #   region: "eu-west-1"
   logging:
     level: "info"
@@ -55,17 +55,17 @@ secrets:
 externalSecrets:
   enabled: true
   secrets:
-    - name: auth
-      store: pulumi-store
-      refreshInterval: 1h
-      template:
-        type: Opaque
-        data:
-          auth.yaml: |
-            auth:
-              users:
-              - username: "admin"
-                password: "{{ .adminPassword }}"
-      keys:
-        - name: adminPassword
-          remoteKey: helm-portal-password
+  - name: auth
+    store: pulumi-store
+    refreshInterval: 1h
+    template:
+      type: Opaque
+      data:
+        auth.yaml: |
+          auth:
+            users:
+            - username: "admin"
+              password: "{{ .adminPassword }}"
+    keys:
+    - name: adminPassword
+      remoteKey: oci-storage-password

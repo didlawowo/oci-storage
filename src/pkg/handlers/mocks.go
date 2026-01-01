@@ -5,8 +5,8 @@ import (
 	"context"
 	"io"
 
-	"helm-portal/pkg/models"
-	utils "helm-portal/pkg/utils"
+	"oci-storage/pkg/models"
+	utils "oci-storage/pkg/utils"
 
 	"github.com/stretchr/testify/mock"
 )

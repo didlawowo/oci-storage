@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"helm-portal/config"
-	"helm-portal/pkg/models"
-	"helm-portal/pkg/utils"
+	"oci-storage/config"
+	"oci-storage/pkg/models"
+	"oci-storage/pkg/utils"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
@@ -18,7 +18,7 @@ import (
 )
 
 func setupProxyTestEnv(t *testing.T) (*fiber.App, *MockChartService, *MockImageService, *MockProxyService, *OCIHandler, string, func()) {
-	tempDir, err := os.MkdirTemp("", "helm-portal-proxy-test")
+	tempDir, err := os.MkdirTemp("", "oci-storage-proxy-test")
 	assert.NoError(t, err)
 
 	log := utils.NewLogger(utils.Config{})

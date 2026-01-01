@@ -47,17 +47,17 @@ chmod +x update-helm-chart.sh
 ./update-helm-chart.sh
 
 # Or specify a namespace and release name
-./update-helm-chart.sh my-namespace my-helm-portal
+./update-helm-chart.sh my-namespace my-oci-storage
 ```
 
 ### Manual installation with Helm
 
 ```bash
 # Install the chart
-helm install helm-portal ./helm
+helm install oci-storage ./helm
 
 # Or with a specific namespace
-helm install helm-portal ./helm --namespace my-namespace --create-namespace
+helm install oci-storage ./helm --namespace my-namespace --create-namespace
 ```
 
 ### Using the OCI registry
@@ -105,10 +105,10 @@ backup:
   enabled: false
   gcp:
 
-    bucket: "helm-portal-backup"
+    bucket: "oci-storage-backup"
     projectID: "your-project"
   # aws:
-  #   bucket: "helm-portal-backup"
+  #   bucket: "oci-storage-backup"
   #   region: "eu-west-1"
 ```
 
@@ -140,14 +140,14 @@ curl -X GET http://localhost:3030/api/charts/chart-name/version
 
 ```bash
 # Deploy the application
-helm install helm-portal ./helm
+helm install oci-storage ./helm
 ```
 
 ### Helm Commands
 
 ```bash
 # List available charts in the registry
-helm search repo helm-portal
+helm search repo oci-storage
 
 # Install a chart from the registry
 helm install my-app oci://localhost:3030/chart-name --version 1.0.0

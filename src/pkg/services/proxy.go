@@ -14,9 +14,9 @@ import (
 	"sync"
 	"time"
 
-	"helm-portal/config"
-	"helm-portal/pkg/models"
-	"helm-portal/pkg/utils"
+	"oci-storage/config"
+	"oci-storage/pkg/models"
+	"oci-storage/pkg/utils"
 
 	"github.com/sirupsen/logrus"
 )
@@ -51,8 +51,8 @@ func NewProxyService(cfg *config.Config, log *utils.Logger) *ProxyService {
 	svc.loadCacheState()
 
 	log.WithFields(logrus.Fields{
-		"enabled":   cfg.Proxy.Enabled,
-		"maxSizeGB": cfg.Proxy.Cache.MaxSizeGB,
+		"enabled":    cfg.Proxy.Enabled,
+		"maxSizeGB":  cfg.Proxy.Cache.MaxSizeGB,
 		"registries": len(cfg.Proxy.Registries),
 	}).Info("Proxy service initialized")
 

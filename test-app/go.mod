@@ -1,3 +1,3 @@
-module helm-portal-test-app
+module oci-storage-test-app
 
 go 1.21

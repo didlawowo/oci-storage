@@ -69,7 +69,7 @@ For proxy tests, you can configure:
 
 ## Key Technical Details
 
-- Uses Go modules with `helm-portal` as module name
+- Uses Go modules with `oci-storage` as module name
 - Port 3030 is hardcoded in main.go and used throughout
 - Chart storage path configurable via config.yaml
 - Supports both AWS S3 and GCP Cloud Storage for backups

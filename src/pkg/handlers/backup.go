@@ -1,9 +1,9 @@
 package handlers
 
 import (
-	cfg "helm-portal/config"
-	services "helm-portal/pkg/services"
-	utils "helm-portal/pkg/utils"
+	cfg "oci-storage/config"
+	services "oci-storage/pkg/services"
+	utils "oci-storage/pkg/utils"
 
 	"github.com/gofiber/fiber/v2"
 )

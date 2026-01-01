@@ -10,10 +10,10 @@ import (
 	"github.com/sirupsen/logrus"
 	"gopkg.in/yaml.v2"
 
-	"helm-portal/config"
+	"oci-storage/config"
 
-	"helm-portal/pkg/interfaces"
-	utils "helm-portal/pkg/utils"
+	"oci-storage/pkg/interfaces"
+	utils "oci-storage/pkg/utils"
 
 	"os"
 	"path/filepath"

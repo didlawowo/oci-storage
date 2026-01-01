@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"helm-portal/config"
-	service "helm-portal/pkg/services"
-	"helm-portal/pkg/utils"
+	"oci-storage/config"
+	service "oci-storage/pkg/services"
+	"oci-storage/pkg/utils"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -22,10 +22,10 @@ import (
 
 const (
 	// Variables d'environnement pour les tests d'intégration Azure
-	azureIntegrationEnvVar     = "AZURE_INTEGRATION_TEST"
-	azureStorageAccountEnvVar  = "AZURE_TEST_STORAGE_ACCOUNT" 
-	azureStorageKeyEnvVar      = "AZURE_TEST_STORAGE_KEY"
-	azureContainerEnvVar       = "AZURE_TEST_CONTAINER"
+	azureIntegrationEnvVar    = "AZURE_INTEGRATION_TEST"
+	azureStorageAccountEnvVar = "AZURE_TEST_STORAGE_ACCOUNT"
+	azureStorageKeyEnvVar     = "AZURE_TEST_STORAGE_KEY"
+	azureContainerEnvVar      = "AZURE_TEST_CONTAINER"
 )
 
 // setupAzureIntegrationTest configure l'environnement pour les tests d'intégration
@@ -41,7 +41,7 @@ func setupAzureIntegrationTest(t *testing.T) (*config.Config, *utils.Logger, str
 	container := os.Getenv(azureContainerEnvVar)
 
 	if storageAccount == "" || storageKey == "" || container == "" {
-		t.Skipf("Missing Azure credentials. Required env vars: %s, %s, %s", 
+		t.Skipf("Missing Azure credentials. Required env vars: %s, %s, %s",
 			azureStorageAccountEnvVar, azureStorageKeyEnvVar, azureContainerEnvVar)
 	}
 
@@ -90,18 +90,18 @@ func TestAzureIntegration_BasicBackup(t *testing.T) {
 
 	// Créer des fichiers de test
 	testFiles := map[string]string{
-		"charts/test-chart-1.0.0.tgz":   "fake chart content for integration test",
-		"index.yaml":                    "apiVersion: v1\nentries:\n  test-chart: []",
-		"manifests/test/1.0.0.json":     `{"schemaVersion": 2, "mediaType": "application/vnd.oci.image.manifest.v1+json"}`,
+		"charts/test-chart-1.0.0.tgz": "fake chart content for integration test",
+		"index.yaml":                  "apiVersion: v1\nentries:\n  test-chart: []",
+		"manifests/test/1.0.0.json":   `{"schemaVersion": 2, "mediaType": "application/vnd.oci.image.manifest.v1+json"}`,
 	}
 
 	for relPath, content := range testFiles {
 		fullPath := filepath.Join(tempDir, relPath)
 		dir := filepath.Dir(fullPath)
-		
+
 		err := os.MkdirAll(dir, 0755)
 		require.NoError(t, err)
-		
+
 		err = ioutil.WriteFile(fullPath, []byte(content), 0644)
 		require.NoError(t, err)
 	}
@@ -120,7 +120,7 @@ func TestAzureIntegration_BasicBackup(t *testing.T) {
 	// Si le service est créé avec succès, tester le backup
 	if backupService != nil {
 		t.Log("Successfully connected to Azure Blob Storage")
-		
+
 		// Exécuter le backup
 		err = backupService.Backup()
 		if err != nil {
@@ -145,7 +145,7 @@ func TestAzureIntegration_ContainerCreation(t *testing.T) {
 
 	// Tenter de créer le service (devrait créer le container automatiquement)
 	backupService, err := service.NewBackupService(cfg, logger)
-	
+
 	if err != nil {
 		if strings.Contains(err.Error(), "failed to create container") {
 			t.Logf("Container creation failed (may be expected): %v", err)
@@ -195,7 +195,7 @@ func TestAzureIntegration_LargeFileBackup(t *testing.T) {
 		start := time.Now()
 		err = backupService.Backup()
 		duration := time.Since(start)
-		
+
 		if err != nil {
 			t.Logf("Large file backup failed: %v", err)
 		} else {
@@ -215,13 +215,13 @@ func TestAzureIntegration_MultipleFiles(t *testing.T) {
 	for i := 0; i < numFiles; i++ {
 		relPath := fmt.Sprintf("charts/chart-%d.tgz", i)
 		content := fmt.Sprintf("Chart %d content with some data to make it realistic", i)
-		
+
 		fullPath := filepath.Join(tempDir, relPath)
 		dir := filepath.Dir(fullPath)
-		
+
 		err := os.MkdirAll(dir, 0755)
 		require.NoError(t, err)
-		
+
 		err = ioutil.WriteFile(fullPath, []byte(content), 0644)
 		require.NoError(t, err)
 	}
@@ -240,11 +240,11 @@ func TestAzureIntegration_MultipleFiles(t *testing.T) {
 		start := time.Now()
 		err = backupService.Backup()
 		duration := time.Since(start)
-		
+
 		if err != nil {
 			t.Logf("Multiple files backup failed: %v", err)
 		} else {
-			t.Logf("Multiple files backup completed in %v (avg: %v per file)", 
+			t.Logf("Multiple files backup completed in %v (avg: %v per file)",
 				duration, duration/time.Duration(numFiles))
 		}
 	}
@@ -266,7 +266,7 @@ func TestAzureIntegration_RestoreOperation(t *testing.T) {
 	if backupService != nil {
 		// Tenter de faire une restoration (devrait retourner "not implemented")
 		err = backupService.Restore()
-		
+
 		if err != nil && strings.Contains(err.Error(), "not implemented") {
 			t.Log("Restore correctly returns 'not implemented' error")
 		} else if err != nil {
@@ -329,9 +329,9 @@ func TestAzureIntegration_PerformanceBaseline(t *testing.T) {
 		name string
 		size int
 	}{
-		{"small.tgz", 1024},           // 1KB
-		{"medium.tgz", 100 * 1024},    // 100KB
-		{"large.tgz", 1024 * 1024},    // 1MB
+		{"small.tgz", 1024},        // 1KB
+		{"medium.tgz", 100 * 1024}, // 100KB
+		{"large.tgz", 1024 * 1024}, // 1MB
 	}
 
 	for _, file := range testFiles {
@@ -371,7 +371,7 @@ func TestAzureIntegration_PerformanceBaseline(t *testing.T) {
 			}
 
 			throughputMBps := float64(totalSize) / (1024 * 1024) / duration.Seconds()
-			t.Logf("Backup performance: %v for %d bytes (%.2f MB/s)", 
+			t.Logf("Backup performance: %v for %d bytes (%.2f MB/s)",
 				duration, totalSize, throughputMBps)
 
 			// Vérifier que les performances sont raisonnables (au moins 0.1 MB/s)

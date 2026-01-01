@@ -4,9 +4,9 @@ import (
 	"os"
 	"testing"
 
-	"helm-portal/config"
-	service "helm-portal/pkg/services"
-	"helm-portal/pkg/utils"
+	"oci-storage/config"
+	service "oci-storage/pkg/services"
+	"oci-storage/pkg/utils"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -70,9 +70,9 @@ func TestAzureBackupService_ConfigValidation(t *testing.T) {
 	})
 
 	tests := []struct {
-		name           string
-		config         *config.Config
-		expectedError  string
+		name            string
+		config          *config.Config
+		expectedError   string
 		azureAccountKey string
 	}{
 		{

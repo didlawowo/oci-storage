@@ -20,11 +20,11 @@ services:
   #   networks:
   #     - helm-network
 
-  helm-portal:
-    image: fizzbuzz2/helm-portal:latest
+  oci-storage:
+    image: fizzbuzz2/oci-storage:latest
     build:
       context: .
-    container_name: helm-portal
+    container_name: oci-storage
     volumes:
       - ./charts:/app/data # Pour persister les charts
       - ./src/config:/app/config

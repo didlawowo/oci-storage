@@ -46,7 +46,7 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 
 func infoHandler(w http.ResponseWriter, r *http.Request) {
 	resp := InfoResponse{
-		App:       "helm-portal-test-app",
+		App:       "oci-storage-test-app",
 		Version:   version,
 		Hostname:  hostname,
 		Message:   "Hello from Helm Portal Test App! This validates OCI registry and Helm chart functionality.",
@@ -84,7 +84,7 @@ func rootHandler(w http.ResponseWriter, r *http.Request) {
             <h3>Validation</h3>
             <p>This app was deployed to validate:</p>
             <ul>
-                <li>Docker image pushed to <code>helm-portal.dc-tech.work</code></li>
+                <li>Docker image pushed to <code>oci-storage.dc-tech.work</code></li>
                 <li>Helm chart stored in Helm Portal registry</li>
                 <li>ArgoCD deployment from Helm Portal</li>
             </ul>
@@ -111,7 +111,7 @@ func main() {
 	http.HandleFunc("/health", healthHandler)
 	http.HandleFunc("/info", infoHandler)
 
-	log.Printf("Starting helm-portal-test-app v%s on port %s", version, port)
+	log.Printf("Starting oci-storage-test-app v%s on port %s", version, port)
 	if err := http.ListenAndServe(":"+port, nil); err != nil {
 		log.Fatal(err)
 	}

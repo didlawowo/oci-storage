@@ -1,4 +1,4 @@
-module helm-portal
+module oci-storage
 
 go 1.24.0
 

@@ -8,8 +8,8 @@ package handlers
 //     "os"
 //     "path/filepath"
 //     "testing"
-//     "helm-portal/pkg/models"
-//     "helm-portal/pkg/utils"
+//     "oci-storage/pkg/models"
+//     "oci-storage/pkg/utils"
 //     "github.com/gofiber/fiber/v2"
 //     "github.com/stretchr/testify/assert"
 //     "github.com/stretchr/testify/mock"
@@ -18,7 +18,7 @@ package handlers
 /*
 func setupTestEnv(t *testing.T) (*fiber.App, *MockChartService, *OCIHandler, func()) {
 	// Create temp directory
-	tempDir, err := os.MkdirTemp("", "helm-portal-test")
+	tempDir, err := os.MkdirTemp("", "oci-storage-test")
 	assert.NoError(t, err)
 
 	// Setup components
@@ -101,7 +101,7 @@ func TestHandleManifest(t *testing.T) {
 }
 */
 
-// TestPutManifest is commented out due to missing blob file setup  
+// TestPutManifest is commented out due to missing blob file setup
 // TODO: Fix test setup for blob files
 /*
 func TestPutManifest(t *testing.T) {

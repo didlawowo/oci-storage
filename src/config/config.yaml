@@ -8,10 +8,10 @@ backup:
   enabled: false
   provider: "gcp" # "aws" ou "gcp"
   gcp:
-    bucket: "helm-portal-backup"
+    bucket: "oci-storage-backup"
     projectID: "dc-consulting-home"
   # aws:
-  #   bucket: "helm-portal-backup"
+  #   bucket: "oci-storage-backup"
   #   region: "eu-west-1"
 
 logging:
@@ -24,12 +24,12 @@ proxy:
   cache:
     maxSizeGB: 10
   registries:
-    - name: "docker.io"
-      url: "https://registry-1.docker.io"
-      default: true
-    - name: "ghcr.io"
-      url: "https://ghcr.io"
-    - name: "gcr.io"
-      url: "https://gcr.io"
-    - name: "quay.io"
-      url: "https://quay.io"
+  - name: "docker.io"
+    url: "https://registry-1.docker.io"
+    default: true
+  - name: "ghcr.io"
+    url: "https://ghcr.io"
+  - name: "gcr.io"
+    url: "https://gcr.io"
+  - name: "quay.io"
+    url: "https://quay.io"

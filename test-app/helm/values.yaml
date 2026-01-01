@@ -5,9 +5,9 @@ podAnnotations:
   oci-portal: "true"
 
 imagePullSecrets:
-  - name: helm-portal-registry
+- name: oci-storage-registry
 
-# Use docker.io image - Kyverno will rewrite to helm-portal proxy
+# Use docker.io image - Kyverno will rewrite to oci-storage proxy
 image:
   repository: nginx
   tag: "alpine"

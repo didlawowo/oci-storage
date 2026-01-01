@@ -6,9 +6,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"helm-portal/config"
-	middleware "helm-portal/pkg/middlewares"
-	"helm-portal/pkg/utils"
+	"oci-storage/config"
+	middleware "oci-storage/pkg/middlewares"
+	"oci-storage/pkg/utils"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
@@ -172,7 +172,7 @@ func TestAuthMiddleware_InvalidCredentials(t *testing.T) {
 			// Vérifier le message d'erreur
 			errorsList := errors.([]interface{})
 			assert.Len(t, errorsList, 1)
-			
+
 			firstError := errorsList[0].(map[string]interface{})
 			assert.Equal(t, tt.expectedError, firstError["message"])
 		})
@@ -212,7 +212,7 @@ func TestAuthMiddleware_MissingAuthHeader(t *testing.T) {
 
 	errorsList := errors.([]interface{})
 	assert.Len(t, errorsList, 1)
-	
+
 	firstError := errorsList[0].(map[string]interface{})
 	assert.Equal(t, "UNAUTHORIZED", firstError["code"])
 	assert.Equal(t, "authentication required", firstError["message"])
@@ -293,7 +293,7 @@ func TestAuthMiddleware_CaseSensitivity(t *testing.T) {
 			name:           "Password case sensitivity",
 			username:       "admin",
 			password:       "ADMIN123", // Majuscules
-			expectedStatus: 401, // Devrait échouer car case-sensitive
+			expectedStatus: 401,        // Devrait échouer car case-sensitive
 		},
 		{
 			name:           "Correct case",

@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"helm-portal/config"
-	"helm-portal/pkg/utils"
+	"oci-storage/config"
+	"oci-storage/pkg/utils"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -69,7 +69,7 @@ func TestAzureBackupMock_BackupSuccess(t *testing.T) {
 		dir := filepath.Dir(fullPath)
 		err := os.MkdirAll(dir, 0755)
 		require.NoError(t, err)
-		
+
 		err = ioutil.WriteFile(fullPath, []byte(content), 0644)
 		require.NoError(t, err)
 	}
@@ -220,7 +220,7 @@ func TestAzureConfigurationValidation_Mock(t *testing.T) {
 				assert.Empty(t, errors, "Configuration should be valid")
 			} else {
 				assert.NotEmpty(t, errors, "Configuration should be invalid")
-				
+
 				// Vérifier que les erreurs attendues sont présentes
 				for _, expectedError := range tt.expectedErrors {
 					found := false
@@ -284,10 +284,10 @@ func TestAzureBackupMock_FileOperations(t *testing.T) {
 	for _, file := range testFiles {
 		fullPath := filepath.Join(tempDir, file.path)
 		dir := filepath.Dir(fullPath)
-		
+
 		err := os.MkdirAll(dir, 0755)
 		require.NoError(t, err)
-		
+
 		err = ioutil.WriteFile(fullPath, []byte(file.content), 0644)
 		require.NoError(t, err)
 	}
@@ -299,7 +299,7 @@ func TestAzureBackupMock_FileOperations(t *testing.T) {
 	for _, file := range testFiles {
 		fullPath := filepath.Join(pathManager.GetBasePath(), file.path)
 		assert.FileExists(t, fullPath)
-		
+
 		stat, err := os.Stat(fullPath)
 		require.NoError(t, err)
 		assert.Equal(t, int64(file.size), stat.Size())

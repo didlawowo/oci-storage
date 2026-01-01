@@ -2,7 +2,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: helm-portal
+  name: oci-storage
   labels: {{- include "application.labels" . | nindent 4 }}
   namespace: {{ .Release.Namespace }}
 spec:
