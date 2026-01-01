@@ -1,6 +1,6 @@
 # Tests Azure Blob Storage
 
-Ce document décrit les tests pour l'implémentation Azure Blob Storage backup dans Helm Portal.
+Ce document décrit les tests pour l'implémentation Azure Blob Storage backup dans oci storage.
 
 ## Types de Tests
 
@@ -90,7 +90,7 @@ task test-azure-integration
 
 ### Données de Test
 
-Les tests utilisent des fichiers de test simulant un environnement Helm Portal :
+Les tests utilisent des fichiers de test simulant un environnement oci storage :
 
 ```
 testdata/

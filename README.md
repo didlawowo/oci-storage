@@ -1,10 +1,10 @@
-# Helm Portal
+# oci storage
 
 A lightweight and standalone OCI (Open Container Initiative) registry for storing, managing, and sharing your Helm charts.
 
 ## 📋 Description
 
-Helm Portal is a simple yet powerful solution that allows you to host your own Helm charts in an OCI-compatible registry. This project implements the OCI specifications to enable efficient storage and distribution of Helm charts without depending on external services.
+oci storage is a simple yet powerful solution that allows you to host your own Helm charts in an OCI-compatible registry. This project implements the OCI specifications to enable efficient storage and distribution of Helm charts without depending on external services.
 
 ## ✨ Features
 

@@ -95,7 +95,7 @@ func main() {
 	log.WithFields(logrus.Fields{
 		"version": version.Version,
 		"commit":  version.Commit,
-	}).Info("Helm Portal starting")
+	}).Info("oci storage starting")
 
 	if err := config.LoadAuthFromFile(cfg); err != nil {
 		log.WithError(err).Fatal("Failed to load auth configuration")
@@ -121,11 +121,11 @@ func main() {
 
 	// Fiber app configuration
 	app := fiber.New(fiber.Config{
-		AppName:       "Helm Portal",
+		AppName:       "oci storage",
 		Prefork:       false,
 		CaseSensitive: true,
 		StrictRouting: true,
-		ServerHeader:  "Helm Portal",
+		ServerHeader:  "oci storage",
 		BodyLimit:     1024 * 1024 * 1024, // 1GB for large Docker image layers
 		Views:         html.New("./views", ".html"),
 

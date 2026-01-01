@@ -1,4 +1,4 @@
-name: Build and Push to Helm Portal
+name: Build and Push to oci storage
 
 on:
   push:
@@ -29,7 +29,7 @@ jobs:
           docker build -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }} .
           docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }} ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
 
-      - name: Login to Helm Portal OCI Registry
+      - name: Login to oci storage OCI Registry
         run: |
           echo "${{ secrets.HELM_PORTAL_PASSWORD }}" | docker login ${{ env.REGISTRY }} -u ${{ secrets.HELM_PORTAL_USERNAME }} --password-stdin
 
@@ -53,7 +53,7 @@ jobs:
           sed -i "s/tag: .*/tag: \"${{ steps.version.outputs.version }}\"/" values.yaml
           helm package .
 
-      - name: Push Helm chart to Helm Portal
+      - name: Push Helm chart to oci storage
         working-directory: test-app/helm
         run: |
           helm registry login ${{ env.REGISTRY }} -u ${{ secrets.HELM_PORTAL_USERNAME }} -p ${{ secrets.HELM_PORTAL_PASSWORD }}

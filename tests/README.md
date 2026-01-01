@@ -1,6 +1,6 @@
-# Tests Externes Helm Portal
+# Tests Externes oci storage
 
-Ce répertoire contient les tests unitaires et d'intégration externes pour Helm Portal, organisés séparément du code source principal.
+Ce répertoire contient les tests unitaires et d'intégration externes pour oci storage, organisés séparément du code source principal.
 
 ## Structure
 

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Helm Portal is a lightweight OCI-compatible registry for storing and managing Helm charts. It's built in Go using the Fiber web framework and provides both a web interface and REST API for chart management.
+oci storage is a lightweight OCI-compatible registry for storing and managing Helm charts. It's built in Go using the Fiber web framework and provides both a web interface and REST API for chart management.
 
 ## Development Commands
 

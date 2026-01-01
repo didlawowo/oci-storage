@@ -64,7 +64,7 @@ test_endpoint() {
 }
 
 echo "========================================"
-echo "  Helm Portal Proxy Test Suite"
+echo "  oci storage Proxy Test Suite"
 echo "========================================"
 echo ""
 log_info "Testing portal at: $PORTAL_URL"

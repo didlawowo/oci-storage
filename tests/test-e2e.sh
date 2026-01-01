@@ -1,5 +1,5 @@
 #!/bin/bash
-# End-to-end test script for Helm Portal
+# End-to-end test script for oci storage
 # Tests: Chart push/pull/delete, Image push/pull/delete, Proxy
 
 set -e
@@ -79,7 +79,7 @@ test_endpoint() {
 }
 
 echo "========================================"
-echo "  Helm Portal E2E Test Suite"
+echo "  oci storage E2E Test Suite"
 echo "========================================"
 echo ""
 log_info "Portal URL: $PORTAL_URL"

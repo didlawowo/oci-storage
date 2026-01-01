@@ -49,7 +49,7 @@ func infoHandler(w http.ResponseWriter, r *http.Request) {
 		App:       "oci-storage-test-app",
 		Version:   version,
 		Hostname:  hostname,
-		Message:   "Hello from Helm Portal Test App! This validates OCI registry and Helm chart functionality.",
+		Message:   "Hello from oci storage Test App! This validates OCI registry and Helm chart functionality.",
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -61,7 +61,7 @@ func rootHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, `<!DOCTYPE html>
 <html>
 <head>
-    <title>Helm Portal Test App</title>
+    <title>oci storage Test App</title>
     <style>
         body { font-family: Arial, sans-serif; margin: 40px; background: #1a1a2e; color: #eee; }
         .container { max-width: 600px; margin: 0 auto; }
@@ -73,7 +73,7 @@ func rootHandler(w http.ResponseWriter, r *http.Request) {
 </head>
 <body>
     <div class="container">
-        <h1>Helm Portal Test App</h1>
+        <h1>oci storage Test App</h1>
         <div class="info">
             <p class="success">Deployment successful!</p>
             <p><strong>Version:</strong> %s</p>
@@ -85,8 +85,8 @@ func rootHandler(w http.ResponseWriter, r *http.Request) {
             <p>This app was deployed to validate:</p>
             <ul>
                 <li>Docker image pushed to <code>oci-storage.dc-tech.work</code></li>
-                <li>Helm chart stored in Helm Portal registry</li>
-                <li>ArgoCD deployment from Helm Portal</li>
+                <li>Helm chart stored in oci storage registry</li>
+                <li>ArgoCD deployment from oci storage</li>
             </ul>
         </div>
         <div class="info">
