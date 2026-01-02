@@ -4,7 +4,7 @@ podAnnotations:
   oci-portal-skip: "true"
 image:
   repository: fizzbuzz2/oci-storage
-  tag: "platform-resolve"
+  tag: "on-demand-resolve"
   pullPolicy: "Always"
   pullSecrets: []
 strategy:

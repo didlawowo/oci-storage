@@ -598,11 +598,52 @@ func (h *OCIHandler) resolvePlatformManifest(c *fiber.Ctx, indexData []byte) ([]
 		"digest":   matchingDesc.Digest,
 	}).Debug("Found matching platform manifest")
 
-	// Fetch the platform-specific manifest from cache (should be there from prefetch)
+	// Try to fetch the platform-specific manifest from cache first
 	blobPath := h.pathManager.GetBlobPath(matchingDesc.Digest)
 	manifestData, err := os.ReadFile(blobPath)
+	if err == nil {
+		return manifestData, matchingDesc.Digest, nil
+	}
+
+	// Not in cache - fetch on-demand from upstream if proxy is enabled
+	if h.proxyService == nil || !h.proxyService.IsEnabled() {
+		return nil, "", fmt.Errorf("platform manifest not in cache and proxy not enabled: %w", err)
+	}
+
+	// Get the image name from context
+	name := h.getName(c)
+
+	h.log.WithFields(logrus.Fields{
+		"name":     name,
+		"platform": matchingDesc.Platform.OS + "/" + matchingDesc.Platform.Architecture,
+		"digest":   matchingDesc.Digest,
+	}).Info("Platform manifest not in cache, fetching on-demand")
+
+	// Resolve upstream registry
+	registryURL, upstreamName, err := h.proxyService.ResolveRegistry(name)
 	if err != nil {
-		return nil, "", fmt.Errorf("platform manifest not in cache: %w", err)
+		return nil, "", fmt.Errorf("failed to resolve registry: %w", err)
+	}
+
+	// Fetch the platform-specific manifest from upstream
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	manifestData, _, err = h.proxyService.GetManifest(ctx, registryURL, upstreamName, matchingDesc.Digest)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to fetch platform manifest from upstream: %w", err)
+	}
+
+	// Cache the manifest for future requests
+	if err := os.MkdirAll(filepath.Dir(blobPath), 0755); err == nil {
+		if err := os.WriteFile(blobPath, manifestData, 0644); err != nil {
+			h.log.WithError(err).Warn("Failed to cache platform manifest")
+		} else {
+			h.log.WithFields(logrus.Fields{
+				"platform": matchingDesc.Platform.OS + "/" + matchingDesc.Platform.Architecture,
+				"digest":   matchingDesc.Digest,
+			}).Info("Platform manifest fetched and cached on-demand")
+		}
 	}
 
 	return manifestData, matchingDesc.Digest, nil
