@@ -30,6 +30,15 @@ spec:
       mutate:
         foreach:
           - list: "request.object.spec.containers"
+            preconditions:
+              all:
+                # Skip images that already point to the portal (avoid double-rewrite)
+                - key: "{{ `{{element.image}}` }}"
+                  operator: NotEquals
+                  value: "{{ .Values.kyverno.portalHost }}/*"
+                - key: "{{ `{{ regex_match('^` }}{{ .Values.kyverno.portalHost | replace "." "\\\\." }}{{ `/.*', element.image) }}` }}"
+                  operator: NotEquals
+                  value: "true"
             patchStrategicMerge:
               spec:
                 containers:
