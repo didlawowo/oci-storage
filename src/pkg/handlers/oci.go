@@ -385,6 +385,9 @@ func (h *OCIHandler) cacheManifest(name, reference string, manifestData []byte, 
 		}).Debug("Caching manifest list")
 		// Set the size in the manifest struct for SaveImage
 		manifest.Config.Size = totalSize
+
+		// Pre-fetch amd64 and arm64 manifests for common platforms
+		go h.prefetchPlatformManifests(index, registryURL, upstreamName)
 	} else {
 		totalSize = manifest.GetTotalSize()
 	}
@@ -427,6 +430,55 @@ func (h *OCIHandler) cacheManifest(name, reference string, manifestData []byte, 
 		"reference": reference,
 		"registry":  registryName,
 	}).Info("Manifest cached successfully")
+}
+
+// prefetchPlatformManifests pre-fetches and caches manifests for common platforms (amd64, arm64)
+func (h *OCIHandler) prefetchPlatformManifests(index models.OCIIndex, registryURL, upstreamName string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	// Target platforms to prefetch
+	targetPlatforms := map[string]bool{
+		"linux/amd64": true,
+		"linux/arm64": true,
+	}
+
+	for _, desc := range index.Manifests {
+		if desc.Platform == nil {
+			continue
+		}
+
+		platformKey := desc.Platform.OS + "/" + desc.Platform.Architecture
+		if !targetPlatforms[platformKey] {
+			continue
+		}
+
+		h.log.WithFields(logrus.Fields{
+			"platform": platformKey,
+			"digest":   desc.Digest,
+		}).Debug("Prefetching platform manifest")
+
+		// Fetch the platform-specific manifest
+		manifestData, _, err := h.proxyService.GetManifest(ctx, registryURL, upstreamName, desc.Digest)
+		if err != nil {
+			h.log.WithError(err).WithField("platform", platformKey).Warn("Failed to prefetch platform manifest")
+			continue
+		}
+
+		// Cache as blob for digest-based lookups
+		blobPath := h.pathManager.GetBlobPath(desc.Digest)
+		if err := os.MkdirAll(filepath.Dir(blobPath), 0755); err == nil {
+			if err := os.WriteFile(blobPath, manifestData, 0644); err != nil {
+				h.log.WithError(err).Warn("Failed to cache platform manifest as blob")
+			} else {
+				h.log.WithFields(logrus.Fields{
+					"platform": platformKey,
+					"digest":   desc.Digest,
+					"size":     len(manifestData),
+				}).Info("Platform manifest prefetched and cached")
+			}
+		}
+	}
 }
 
 // sendManifestResponse sends a manifest response to the client

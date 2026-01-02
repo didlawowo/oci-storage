@@ -9,8 +9,8 @@ imagePullSecrets: []
 
 # Use docker.io image - Kyverno will rewrite to oci-storage proxy
 image:
-  repository: nginx
-  tag: "alpine"
+  repository: busybox
+  tag: "1.36"
   pullPolicy: Always
 
 service:
