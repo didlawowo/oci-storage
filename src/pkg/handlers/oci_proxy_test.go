@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"io"
 	"net/http/httptest"
 	"os"
@@ -136,13 +137,17 @@ func TestHandleManifest_HeadTagNoProxy(t *testing.T) {
 	app.Head("/v2/:name/manifests/:reference", handler.HandleManifest)
 
 	mockProxyService.On("IsEnabled").Return(true)
+	// HEAD requests now also try proxy - mock upstream returning 502 (failed to fetch)
+	mockProxyService.On("ResolveRegistry", "myimage").Return("https://registry-1.docker.io", "library/myimage", nil)
+	mockProxyService.On("GetManifest", mock.Anything, "https://registry-1.docker.io", "library/myimage", "v1.0.0").
+		Return(nil, "", errors.New("manifest not found"))
 
-	// HEAD request with tag reference should return 404 (allow push)
+	// HEAD request with tag reference should return 502 when proxy fails
 	req := httptest.NewRequest("HEAD", "/v2/myimage/manifests/v1.0.0", nil)
 	resp, err := app.Test(req)
 
 	assert.NoError(t, err)
-	assert.Equal(t, 404, resp.StatusCode)
+	assert.Equal(t, 502, resp.StatusCode)
 }
 
 func TestHandleManifest_ProxyDisabled(t *testing.T) {
@@ -302,21 +307,7 @@ func TestMultiArchManifestFlow(t *testing.T) {
 	app.Get("/v2/:name/manifests/:reference", handler.HandleManifest)
 	app.Head("/v2/:name/manifests/:reference", handler.HandleManifest)
 
-	// OCI Image Index (multi-arch manifest)
-	indexManifest := []byte(`{
-		"schemaVersion": 2,
-		"mediaType": "application/vnd.oci.image.index.v1+json",
-		"manifests": [
-			{
-				"mediaType": "application/vnd.oci.image.manifest.v1+json",
-				"digest": "sha256:dcfed685de6f232a6cefc043f92d8b0d64c8d1edf650a61805f2c7a3d745b749",
-				"size": 2495,
-				"platform": {"architecture": "amd64", "os": "linux"}
-			}
-		]
-	}`)
-
-	// Architecture-specific manifest
+	// Architecture-specific manifest - defined first to calculate its digest
 	archManifest := []byte(`{
 		"schemaVersion": 2,
 		"mediaType": "application/vnd.oci.image.manifest.v1+json",
@@ -324,14 +315,33 @@ func TestMultiArchManifestFlow(t *testing.T) {
 		"layers": [{"digest": "sha256:layer123"}]
 	}`)
 
-	childDigest := "sha256:dcfed685de6f232a6cefc043f92d8b0d64c8d1edf650a61805f2c7a3d745b749"
+	// The actual sha256 of archManifest above
+	childDigest := "sha256:a74fe2bdc4f2af02400b8bc5c8dd3276465457c40746acc7ff1bbc9e066a2e29"
 
-	// Setup mocks for first request (tag-based)
+	// OCI Image Index (multi-arch manifest) - must reference the correct digest
+	indexManifest := []byte(`{
+		"schemaVersion": 2,
+		"mediaType": "application/vnd.oci.image.index.v1+json",
+		"manifests": [
+			{
+				"mediaType": "application/vnd.oci.image.manifest.v1+json",
+				"digest": "sha256:a74fe2bdc4f2af02400b8bc5c8dd3276465457c40746acc7ff1bbc9e066a2e29",
+				"size": 175,
+				"platform": {"architecture": "amd64", "os": "linux"}
+			}
+		]
+	}`)
+
+	// Setup mocks - all GetManifest calls must be configured upfront
+	// because prefetchPlatformManifests runs in a goroutine
 	mockProxyService.On("IsEnabled").Return(true)
 	mockProxyService.On("ResolveRegistry", "nginx").Return("https://registry-1.docker.io", "library/nginx", nil)
 	mockProxyService.On("GetManifest", mock.Anything, "https://registry-1.docker.io", "library/nginx", "alpine").
 		Return(indexManifest, "application/vnd.oci.image.index.v1+json", nil)
+	mockProxyService.On("GetManifest", mock.Anything, "https://registry-1.docker.io", "library/nginx", childDigest).
+		Return(archManifest, "application/vnd.oci.image.manifest.v1+json", nil)
 	mockProxyService.On("AddToCache", mock.Anything).Return(nil)
+	mockProxyService.On("UpdateAccessTime", mock.Anything, mock.Anything).Return()
 	mockImageService.On("SaveImage", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	// First request: get the index
@@ -341,12 +351,8 @@ func TestMultiArchManifestFlow(t *testing.T) {
 	assert.Equal(t, 200, resp1.StatusCode)
 	assert.Contains(t, resp1.Header.Get("Content-Type"), "index")
 
-	// Wait for background goroutine
+	// Wait for background goroutine (prefetch)
 	time.Sleep(100 * time.Millisecond)
-
-	// Setup mocks for second request (digest-based child manifest)
-	mockProxyService.On("GetManifest", mock.Anything, "https://registry-1.docker.io", "library/nginx", childDigest).
-		Return(archManifest, "application/vnd.oci.image.manifest.v1+json", nil)
 
 	// Second request: get the child manifest by digest (HEAD then GET)
 	req2 := httptest.NewRequest("HEAD", "/v2/nginx/manifests/"+childDigest, nil)

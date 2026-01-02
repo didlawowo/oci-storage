@@ -4,7 +4,7 @@ podAnnotations:
   oci-portal-skip: "true"
 image:
   repository: fizzbuzz2/oci-storage
-  tag: "fix-cache"
+  tag: "refactor-oci"
   pullPolicy: "Always"
   pullSecrets: []
 strategy:
