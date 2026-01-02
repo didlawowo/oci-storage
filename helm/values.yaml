@@ -227,5 +227,11 @@ config:
       # Credentials loaded from environment variables GHCR_USERNAME and GHCR_PASSWORD
     - name: "gcr.io"
       url: "https://gcr.io"
+    - name: "eu.gcr.io"
+      url: "https://eu.gcr.io"
+    - name: "us.gcr.io"
+      url: "https://us.gcr.io"
+    - name: "asia.gcr.io"
+      url: "https://asia.gcr.io"
     - name: "quay.io"
       url: "https://quay.io"
