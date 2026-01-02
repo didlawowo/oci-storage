@@ -383,19 +383,25 @@ func (h *OCIHandler) cacheManifest(name, reference string, manifestData []byte, 
 			"children":  len(index.Manifests),
 			"totalSize": totalSize,
 		}).Debug("Caching manifest list")
-		// Set the size in the manifest struct for SaveImage
-		manifest.Config.Size = totalSize
+
+		// For manifest lists, save the raw bytes directly to preserve the manifests array
+		// Don't use SaveImage as it will corrupt the data by re-marshaling as OCIManifest
+		manifestPath := h.pathManager.GetImageManifestPath(name, reference)
+		if err := os.MkdirAll(filepath.Dir(manifestPath), 0755); err == nil {
+			if err := os.WriteFile(manifestPath, manifestData, 0644); err != nil {
+				h.log.WithError(err).Warn("Failed to save manifest list")
+			}
+		}
 
 		// Pre-fetch amd64 and arm64 manifests for common platforms
 		go h.prefetchPlatformManifests(index, registryURL, upstreamName)
 	} else {
 		totalSize = manifest.GetTotalSize()
-	}
-
-	// Save via image service
-	if h.imageService != nil {
-		if err := h.imageService.SaveImage(name, reference, &manifest); err != nil {
-			h.log.WithError(err).Warn("Failed to cache manifest via image service")
+		// Save via image service for regular manifests
+		if h.imageService != nil {
+			if err := h.imageService.SaveImage(name, reference, &manifest); err != nil {
+				h.log.WithError(err).Warn("Failed to cache manifest via image service")
+			}
 		}
 	}
 
