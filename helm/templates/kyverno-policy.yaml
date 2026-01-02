@@ -12,8 +12,8 @@ metadata:
     policies.kyverno.io/subject: Pod
     policies.kyverno.io/description: >-
       This policy rewrites container image references to use the OCI Portal
-      as a pull-through cache proxy. Only pods with the annotation
-      'oci-portal: "true"' are affected.
+      as a pull-through cache proxy. Active by default for all pods.
+      Add annotation 'oci-portal-skip: "true"' to exclude a pod from rewriting.
 spec:
   rules:
     - name: rewrite-docker-io-images
@@ -22,8 +22,11 @@ spec:
           - resources:
               kinds:
                 - Pod
+      exclude:
+        any:
+          - resources:
               annotations:
-                oci-portal: "true"
+                oci-portal-skip: "true"
       mutate:
         foreach:
           - list: "request.object.spec.containers"

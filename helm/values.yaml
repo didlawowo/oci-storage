@@ -45,7 +45,7 @@ persistentVolumesClaims:
   accessModes:
   - ReadWriteOnce
   storageClassName: longhorn
-  size: 20Gi
+  size: 30Gi
 application:
   ports:
   - name: http
