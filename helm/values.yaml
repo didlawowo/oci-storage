@@ -4,7 +4,7 @@ podAnnotations:
   oci-portal-skip: "true"
 image:
   repository: fizzbuzz2/oci-storage
-  tag: "refactor-oci"
+  tag: "d16b816"
   pullPolicy: "Always"
   pullSecrets: []
 strategy:
@@ -210,6 +210,7 @@ config:
       default: true
     - name: "ghcr.io"
       url: "https://ghcr.io"
+      # Credentials loaded from environment variables GHCR_USERNAME and GHCR_PASSWORD
     - name: "gcr.io"
       url: "https://gcr.io"
     - name: "quay.io"
