@@ -352,6 +352,55 @@ func (s *ImageService) extractConfigFromBlob(digest string) (*models.ImageConfig
 	return &config, nil
 }
 
+// SaveImageIndex saves metadata for a manifest list/OCI index without corrupting the manifest data
+// This is used for multi-arch images where we can't use SaveImage (which re-marshals as OCIManifest)
+func (s *ImageService) SaveImageIndex(name, reference string, manifestData []byte, totalSize int64) error {
+	s.log.WithFields(logrus.Fields{
+		"name":      name,
+		"reference": reference,
+		"size":      totalSize,
+	}).Info("Saving Docker image index metadata")
+
+	// Create image directory
+	imageDir := s.getImageDir(name)
+	if err := os.MkdirAll(imageDir, 0755); err != nil {
+		return fmt.Errorf("failed to create image directory: %w", err)
+	}
+
+	// Calculate digest
+	digest := fmt.Sprintf("sha256:%x", sha256.Sum256(manifestData))
+
+	// Create/update metadata for the image list
+	metadata := &models.ImageMetadata{
+		Name:       name,
+		Repository: name,
+		Tag:        reference,
+		Digest:     digest,
+		Size:       totalSize,
+		Created:    time.Now(),
+		Layers:     []models.LayerInfo{}, // Manifest lists don't have direct layers
+	}
+
+	// Save metadata to tags directory (this is what ListImages looks for)
+	metadataPath := s.getMetadataPath(name, reference)
+	if err := os.MkdirAll(filepath.Dir(metadataPath), 0755); err != nil {
+		return fmt.Errorf("failed to create metadata directory: %w", err)
+	}
+	metadataData, _ := json.MarshalIndent(metadata, "", "  ")
+	if err := os.WriteFile(metadataPath, metadataData, 0644); err != nil {
+		return fmt.Errorf("failed to save metadata: %w", err)
+	}
+
+	s.log.WithFields(logrus.Fields{
+		"name":   name,
+		"tag":    reference,
+		"digest": digest,
+		"size":   totalSize,
+	}).Info("Docker image index metadata saved successfully")
+
+	return nil
+}
+
 func (s *ImageService) findManifestByDigest(name, digest string) (*models.OCIManifest, error) {
 	manifestsDir := filepath.Join(s.pathManager.GetBasePath(), "images", name, "manifests")
 

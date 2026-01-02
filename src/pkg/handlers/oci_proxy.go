@@ -170,6 +170,13 @@ func (h *OCIHandler) cacheManifest(name, reference string, manifestData []byte, 
 			}
 		}
 
+		// Save metadata so the image appears in /images listing
+		if h.imageService != nil {
+			if err := h.imageService.SaveImageIndex(name, reference, manifestData, totalSize); err != nil {
+				h.log.WithError(err).Warn("Failed to save manifest list metadata")
+			}
+		}
+
 		go h.prefetchPlatformManifests(index, registryURL, upstreamName)
 	} else {
 		totalSize = manifest.GetTotalSize()

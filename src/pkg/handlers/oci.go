@@ -185,24 +185,21 @@ func (h *OCIHandler) HandleManifest(c *fiber.Ctx) error {
 	}
 
 	// Not found locally - try proxy if enabled
-	// NEVER proxy for "charts/" namespace - those are local Helm charts only
-	shouldProxy := h.proxyService != nil && h.proxyService.IsEnabled() && !strings.HasPrefix(name, "charts/")
-	isDigestRef := strings.HasPrefix(reference, "sha256:")
+	// ONLY proxy for paths starting with "proxy/" AND only for GET requests
+	// HEAD requests should never proxy - they're used by push clients to check existence
+	isProxyPath := strings.HasPrefix(name, "proxy/")
+	shouldProxy := h.proxyService != nil && h.proxyService.IsEnabled() && isProxyPath && c.Method() == "GET"
 
 	h.log.WithFunc().WithFields(logrus.Fields{
-		"shouldProxy":      shouldProxy,
-		"proxyServiceNil":  h.proxyService == nil,
-		"isEnabled":        h.proxyService != nil && h.proxyService.IsEnabled(),
-		"startsWithCharts": strings.HasPrefix(name, "charts/"),
-		"method":           c.Method(),
-		"isDigestRef":      isDigestRef,
+		"shouldProxy":     shouldProxy,
+		"isProxyPath":     isProxyPath,
+		"method":          c.Method(),
 	}).Debug("Proxy decision")
 
-	if shouldProxy && (c.Method() == "GET" || c.Method() == "HEAD") {
+	if shouldProxy {
 		h.log.WithFunc().WithFields(logrus.Fields{
 			"name":      name,
 			"reference": reference,
-			"method":    c.Method(),
 		}).Debug("Manifest not found locally, trying proxy")
 
 		return h.proxyManifest(c, name, reference)

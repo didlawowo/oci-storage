@@ -184,3 +184,8 @@ func (m *MockImageService) GetPathManager() *utils.PathManager {
 	args := m.Called()
 	return args.Get(0).(*utils.PathManager)
 }
+
+func (m *MockImageService) SaveImageIndex(name, reference string, manifestData []byte, totalSize int64) error {
+	args := m.Called(name, reference, manifestData, totalSize)
+	return args.Error(0)
+}

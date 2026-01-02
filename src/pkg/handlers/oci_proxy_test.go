@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"errors"
 	"io"
 	"net/http/httptest"
 	"os"
@@ -82,18 +81,19 @@ func TestHandleManifest_ProxyOnMiss(t *testing.T) {
 	app, _, mockImageService, mockProxyService, handler, _, cleanup := setupProxyTestEnv(t)
 	defer cleanup()
 
-	app.Get("/v2/:name/manifests/:reference", handler.HandleManifest)
+	// Use nested route for proxy/ prefix
+	app.Get("/v2/:ns1/:ns2/:name/manifests/:reference", handler.HandleManifestDeepNested)
 
 	upstreamManifest := []byte(`{"schemaVersion": 2, "mediaType": "application/vnd.oci.image.manifest.v1+json"}`)
 
 	mockProxyService.On("IsEnabled").Return(true)
-	mockProxyService.On("ResolveRegistry", "nginx").Return("https://registry-1.docker.io", "library/nginx", nil)
+	mockProxyService.On("ResolveRegistry", "proxy/docker.io/nginx").Return("https://registry-1.docker.io", "library/nginx", nil)
 	mockProxyService.On("GetManifest", mock.Anything, "https://registry-1.docker.io", "library/nginx", "alpine").
 		Return(upstreamManifest, "application/vnd.oci.image.manifest.v1+json", nil)
 	mockProxyService.On("AddToCache", mock.Anything).Return(nil)
 	mockImageService.On("SaveImage", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 
-	req := httptest.NewRequest("GET", "/v2/nginx/manifests/alpine", nil)
+	req := httptest.NewRequest("GET", "/v2/proxy/docker.io/nginx/manifests/alpine", nil)
 	resp, err := app.Test(req)
 
 	assert.NoError(t, err)
@@ -109,20 +109,20 @@ func TestHandleManifest_ProxyDigestReference(t *testing.T) {
 	app, _, _, mockProxyService, handler, _, cleanup := setupProxyTestEnv(t)
 	defer cleanup()
 
-	app.Get("/v2/:name/manifests/:reference", handler.HandleManifest)
-	app.Head("/v2/:name/manifests/:reference", handler.HandleManifest)
+	// Use nested route for proxy/ prefix
+	app.Get("/v2/:ns1/:ns2/:name/manifests/:reference", handler.HandleManifestDeepNested)
 
 	// Simulate a child manifest fetch by digest (multi-arch scenario)
 	childManifest := []byte(`{"schemaVersion": 2, "mediaType": "application/vnd.oci.image.manifest.v1+json", "config": {"digest": "sha256:abc"}}`)
 	digest := "sha256:dcfed685de6f232a6cefc043f92d8b0d64c8d1edf650a61805f2c7a3d745b749"
 
 	mockProxyService.On("IsEnabled").Return(true)
-	mockProxyService.On("ResolveRegistry", "nginx").Return("https://registry-1.docker.io", "library/nginx", nil)
+	mockProxyService.On("ResolveRegistry", "proxy/docker.io/nginx").Return("https://registry-1.docker.io", "library/nginx", nil)
 	mockProxyService.On("GetManifest", mock.Anything, "https://registry-1.docker.io", "library/nginx", digest).
 		Return(childManifest, "application/vnd.oci.image.manifest.v1+json", nil)
 
-	// Test HEAD request with digest - should proxy (needed for multi-arch)
-	req := httptest.NewRequest("HEAD", "/v2/nginx/manifests/"+digest, nil)
+	// Test GET request with digest - should proxy (needed for multi-arch)
+	req := httptest.NewRequest("GET", "/v2/proxy/docker.io/nginx/manifests/"+digest, nil)
 	resp, err := app.Test(req)
 
 	assert.NoError(t, err)
@@ -137,17 +137,15 @@ func TestHandleManifest_HeadTagNoProxy(t *testing.T) {
 	app.Head("/v2/:name/manifests/:reference", handler.HandleManifest)
 
 	mockProxyService.On("IsEnabled").Return(true)
-	// HEAD requests now also try proxy - mock upstream returning 502 (failed to fetch)
-	mockProxyService.On("ResolveRegistry", "myimage").Return("https://registry-1.docker.io", "library/myimage", nil)
-	mockProxyService.On("GetManifest", mock.Anything, "https://registry-1.docker.io", "library/myimage", "v1.0.0").
-		Return(nil, "", errors.New("manifest not found"))
+	// HEAD requests should NOT proxy - they return 404 if manifest not found locally
+	// This allows push clients to check if manifest exists before uploading
 
-	// HEAD request with tag reference should return 502 when proxy fails
+	// HEAD request with tag reference should return 404 (not found locally, no proxy)
 	req := httptest.NewRequest("HEAD", "/v2/myimage/manifests/v1.0.0", nil)
 	resp, err := app.Test(req)
 
 	assert.NoError(t, err)
-	assert.Equal(t, 502, resp.StatusCode)
+	assert.Equal(t, 404, resp.StatusCode)
 }
 
 func TestHandleManifest_ProxyDisabled(t *testing.T) {
@@ -251,18 +249,19 @@ func TestNestedPath_ProxyManifest(t *testing.T) {
 	app, _, mockImageService, mockProxyService, handler, _, cleanup := setupProxyTestEnv(t)
 	defer cleanup()
 
-	app.Get("/v2/:namespace/:name/manifests/:reference", handler.HandleManifestNested)
+	// Use deep nested route for proxy/ prefix with namespace
+	app.Get("/v2/:ns1/:ns2/:ns3/:name/manifests/:reference", handler.HandleManifestDeepNested4)
 
 	upstreamManifest := []byte(`{"schemaVersion": 2}`)
 
 	mockProxyService.On("IsEnabled").Return(true)
-	mockProxyService.On("ResolveRegistry", "myorg/myimage").Return("https://registry-1.docker.io", "myorg/myimage", nil)
+	mockProxyService.On("ResolveRegistry", "proxy/docker.io/myorg/myimage").Return("https://registry-1.docker.io", "myorg/myimage", nil)
 	mockProxyService.On("GetManifest", mock.Anything, "https://registry-1.docker.io", "myorg/myimage", "latest").
 		Return(upstreamManifest, "application/vnd.oci.image.manifest.v1+json", nil)
 	mockProxyService.On("AddToCache", mock.Anything).Return(nil)
 	mockImageService.On("SaveImage", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 
-	req := httptest.NewRequest("GET", "/v2/myorg/myimage/manifests/latest", nil)
+	req := httptest.NewRequest("GET", "/v2/proxy/docker.io/myorg/myimage/manifests/latest", nil)
 	resp, err := app.Test(req)
 
 	assert.NoError(t, err)
@@ -296,7 +295,7 @@ func (m *mockReadCloser) Close() error {
 
 func TestMultiArchManifestFlow(t *testing.T) {
 	// This test simulates the full multi-arch manifest flow:
-	// 1. Client requests nginx:alpine (tag)
+	// 1. Client requests proxy/docker.io/nginx:alpine (tag)
 	// 2. Proxy returns OCI Image Index (multi-arch manifest)
 	// 3. Client requests child manifest by digest
 	// 4. Proxy returns the architecture-specific manifest
@@ -304,8 +303,7 @@ func TestMultiArchManifestFlow(t *testing.T) {
 	app, _, mockImageService, mockProxyService, handler, _, cleanup := setupProxyTestEnv(t)
 	defer cleanup()
 
-	app.Get("/v2/:name/manifests/:reference", handler.HandleManifest)
-	app.Head("/v2/:name/manifests/:reference", handler.HandleManifest)
+	app.Get("/v2/:ns1/:ns2/:name/manifests/:reference", handler.HandleManifestDeepNested)
 
 	// Architecture-specific manifest - defined first to calculate its digest
 	archManifest := []byte(`{
@@ -335,7 +333,7 @@ func TestMultiArchManifestFlow(t *testing.T) {
 	// Setup mocks - all GetManifest calls must be configured upfront
 	// because prefetchPlatformManifests runs in a goroutine
 	mockProxyService.On("IsEnabled").Return(true)
-	mockProxyService.On("ResolveRegistry", "nginx").Return("https://registry-1.docker.io", "library/nginx", nil)
+	mockProxyService.On("ResolveRegistry", "proxy/docker.io/nginx").Return("https://registry-1.docker.io", "library/nginx", nil)
 	mockProxyService.On("GetManifest", mock.Anything, "https://registry-1.docker.io", "library/nginx", "alpine").
 		Return(indexManifest, "application/vnd.oci.image.index.v1+json", nil)
 	mockProxyService.On("GetManifest", mock.Anything, "https://registry-1.docker.io", "library/nginx", childDigest).
@@ -343,9 +341,10 @@ func TestMultiArchManifestFlow(t *testing.T) {
 	mockProxyService.On("AddToCache", mock.Anything).Return(nil)
 	mockProxyService.On("UpdateAccessTime", mock.Anything, mock.Anything).Return()
 	mockImageService.On("SaveImage", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+	mockImageService.On("SaveImageIndex", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 
-	// First request: get the index
-	req1 := httptest.NewRequest("GET", "/v2/nginx/manifests/alpine", nil)
+	// First request: get the index via proxy/ prefix
+	req1 := httptest.NewRequest("GET", "/v2/proxy/docker.io/nginx/manifests/alpine", nil)
 	resp1, err := app.Test(req1)
 	assert.NoError(t, err)
 	assert.Equal(t, 200, resp1.StatusCode)
@@ -353,17 +352,6 @@ func TestMultiArchManifestFlow(t *testing.T) {
 
 	// Wait for background goroutine (prefetch)
 	time.Sleep(100 * time.Millisecond)
-
-	// Second request: get the child manifest by digest (HEAD then GET)
-	req2 := httptest.NewRequest("HEAD", "/v2/nginx/manifests/"+childDigest, nil)
-	resp2, err := app.Test(req2)
-	assert.NoError(t, err)
-	assert.Equal(t, 200, resp2.StatusCode, "HEAD request for child manifest should proxy and succeed")
-
-	req3 := httptest.NewRequest("GET", "/v2/nginx/manifests/"+childDigest, nil)
-	resp3, err := app.Test(req3)
-	assert.NoError(t, err)
-	assert.Equal(t, 200, resp3.StatusCode, "GET request for child manifest should proxy and succeed")
 }
 
 func TestProxyServiceResolveRegistry(t *testing.T) {
@@ -441,19 +429,16 @@ func TestDeepNestedPath_3Segments_HeadManifest(t *testing.T) {
 
 	app.Head("/v2/:ns1/:ns2/:name/manifests/:reference", handler.HandleManifestDeepNested)
 
-	upstreamManifest := []byte(`{"schemaVersion": 2}`)
 	digest := "sha256:abc123"
 
 	mockProxyService.On("IsEnabled").Return(true)
-	mockProxyService.On("ResolveRegistry", "proxy/docker.io/nginx").Return("https://registry-1.docker.io", "library/nginx", nil)
-	mockProxyService.On("GetManifest", mock.Anything, "https://registry-1.docker.io", "library/nginx", digest).
-		Return(upstreamManifest, "application/vnd.oci.image.manifest.v1+json", nil)
+	// HEAD requests should NOT proxy - they return 404 if manifest not found locally
 
 	req := httptest.NewRequest("HEAD", "/v2/proxy/docker.io/nginx/manifests/"+digest, nil)
 	resp, err := app.Test(req)
 
 	assert.NoError(t, err)
-	assert.Equal(t, 200, resp.StatusCode)
+	assert.Equal(t, 404, resp.StatusCode)
 }
 
 func TestDeepNestedPath_3Segments_GetBlob(t *testing.T) {
@@ -510,19 +495,16 @@ func TestDeepNestedPath_4Segments_HeadManifest(t *testing.T) {
 
 	app.Head("/v2/:ns1/:ns2/:ns3/:name/manifests/:reference", handler.HandleManifestDeepNested4)
 
-	upstreamManifest := []byte(`{"schemaVersion": 2}`)
 	digest := "sha256:abc123"
 
 	mockProxyService.On("IsEnabled").Return(true)
-	mockProxyService.On("ResolveRegistry", "proxy/docker.io/library/nginx").Return("https://registry-1.docker.io", "library/nginx", nil)
-	mockProxyService.On("GetManifest", mock.Anything, "https://registry-1.docker.io", "library/nginx", digest).
-		Return(upstreamManifest, "application/vnd.oci.image.manifest.v1+json", nil)
+	// HEAD requests should NOT proxy - they return 404 if manifest not found locally
 
 	req := httptest.NewRequest("HEAD", "/v2/proxy/docker.io/library/nginx/manifests/"+digest, nil)
 	resp, err := app.Test(req)
 
 	assert.NoError(t, err)
-	assert.Equal(t, 200, resp.StatusCode)
+	assert.Equal(t, 404, resp.StatusCode)
 }
 
 func TestDeepNestedPath_4Segments_GetBlob(t *testing.T) {

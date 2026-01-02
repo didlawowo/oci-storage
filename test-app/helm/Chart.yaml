@@ -2,7 +2,7 @@ apiVersion: v2
 name: oci-storage-test-app
 description: Test application to validate oci storage OCI registry and Helm chart functionality
 type: application
-version: 1.0.3
+version: 1.0.4
 appVersion: "1.0.0"
 maintainers:
 - name: chris

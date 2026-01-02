@@ -10,7 +10,7 @@ spec:
   source:
     chart: oci-storage-test-app
     repoURL: oci-storage.dc-tech.work
-    targetRevision: 1.0.2 # Using flat name until charts/ namespace is fixed
+    targetRevision: 1.0.4 # Using flat name until charts/ namespace is fixed
     helm:
       releaseName: oci-storage-test-app
       values: |
@@ -19,7 +19,7 @@ spec:
           - name: oci-storage-registry
         image:
           repository: oci-storage.dc-tech.work/images/test-app
-          tag: "1.0.1"
+          tag: "1.0.2"
           pullPolicy: Always
         nodeSelector:
           kubernetes.io/hostname: zima

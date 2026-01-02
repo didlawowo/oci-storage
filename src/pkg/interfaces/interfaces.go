@@ -23,6 +23,8 @@ type ChartServiceInterface interface {
 type ImageServiceInterface interface {
 	// SaveImage saves a Docker image manifest and metadata
 	SaveImage(name, reference string, manifest *models.OCIManifest) error
+	// SaveImageIndex saves metadata for a manifest list/OCI index without corrupting the manifest data
+	SaveImageIndex(name, reference string, manifestData []byte, totalSize int64) error
 	// ListImages returns all available images grouped by name
 	ListImages() ([]models.ImageGroup, error)
 	// ImageExists checks if an image with the given name and tag exists
