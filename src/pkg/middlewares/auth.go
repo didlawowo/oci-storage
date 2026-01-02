@@ -25,6 +25,19 @@ func NewAuthMiddleware(config *config.Config, log *utils.Logger) *AuthMiddleware
 
 func (m *AuthMiddleware) Authenticate() fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		// Allow anonymous read access for proxy/cache functionality
+		// Only require auth for write operations (PUT, POST, DELETE, PATCH)
+		method := c.Method()
+		if method == "GET" || method == "HEAD" {
+			// Check if auth header is provided - if so, validate it
+			auth := c.Get("Authorization")
+			if auth == "" {
+				// No auth provided, allow anonymous read
+				m.log.Debug("Anonymous read access allowed")
+				return c.Next()
+			}
+			// Auth provided, validate it below
+		}
 
 		// Récupérer le header d'authentification
 		auth := c.Get("Authorization")
