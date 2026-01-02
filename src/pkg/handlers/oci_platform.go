@@ -17,7 +17,8 @@ import (
 )
 
 // sendManifestResponse sends a manifest response to the client
-// For manifest lists/indexes, it automatically resolves to the platform-specific manifest
+// For manifest lists/indexes, we return the list as-is and let the client handle platform selection
+// This is the standard OCI behavior - clients like containerd know how to handle manifest lists
 func (h *OCIHandler) sendManifestResponse(c *fiber.Ctx, manifestData []byte, reference string) error {
 	h.log.WithFunc().WithField("dataLen", len(manifestData)).Debug("sendManifestResponse called")
 	digest := fmt.Sprintf("sha256:%x", sha256.Sum256(manifestData))
@@ -34,34 +35,7 @@ func (h *OCIHandler) sendManifestResponse(c *fiber.Ctx, manifestData []byte, ref
 	// Determine content type from manifest
 	var manifest models.OCIManifest
 	if err := json.Unmarshal(manifestData, &manifest); err == nil && manifest.MediaType != "" {
-		// Check if this is a manifest list/index - if so, resolve to platform-specific manifest
-		if manifest.MediaType == models.MediaTypeOCIManifestList ||
-			manifest.MediaType == models.MediaTypeDockerManifestList {
-
-			resolvedData, resolvedDigest, err := h.resolvePlatformManifest(c, manifestData)
-			if err == nil && resolvedData != nil {
-				h.log.WithFields(logrus.Fields{
-					"originalDigest": digest,
-					"resolvedDigest": resolvedDigest,
-					"resolvedSize":   len(resolvedData),
-				}).Info("Resolved manifest list to platform-specific manifest")
-
-				manifestData = resolvedData
-				digest = resolvedDigest
-
-				var resolvedManifest models.OCIManifest
-				if err := json.Unmarshal(manifestData, &resolvedManifest); err == nil && resolvedManifest.MediaType != "" {
-					c.Set("Content-Type", resolvedManifest.MediaType)
-				} else {
-					c.Set("Content-Type", models.MediaTypeOCIManifest)
-				}
-			} else {
-				h.log.WithError(err).Warn("Failed to resolve platform manifest, returning index")
-				c.Set("Content-Type", manifest.MediaType)
-			}
-		} else {
-			c.Set("Content-Type", manifest.MediaType)
-		}
+		c.Set("Content-Type", manifest.MediaType)
 	} else {
 		c.Set("Content-Type", "application/vnd.oci.image.manifest.v1+json")
 	}
