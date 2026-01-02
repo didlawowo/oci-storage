@@ -191,7 +191,7 @@ externalSecrets:
   secrets: []
 # Kyverno policy for image rewriting
 kyverno:
-  enabled: false
+  enabled: true
   # The hostname of the OCI portal (without protocol)
   # e.g., "oci-storage.example.com" or "oci-storage:3030"
   portalHost: "oci-storage.dc-tech.work"
