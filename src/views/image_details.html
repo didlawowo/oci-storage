@@ -1,0 +1,308 @@
+<!-- views/image_details.html -->
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.Title}}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+    <link href="/static/css/main.css" rel="stylesheet">
+</head>
+
+<body class="bg-gray-100">
+    <nav class="bg-blue-600 text-white p-4 shadow-lg">
+        <div class="container mx-auto flex items-center">
+            <a href="/" class="flex items-center">
+                <img src="/favicon.ico" alt="Logo" class="h-8 w-8 mr-2">
+                <h1 class="text-2xl font-bold">oci storage</h1>
+            </a>
+            <span class="ml-4 text-blue-200">/ Docker Images / {{.Name}}:{{.Tag}}</span>
+        </div>
+    </nav>
+
+    <main class="container mx-auto p-4">
+        <div class="bg-white rounded-lg shadow-md p-6">
+            <!-- Header -->
+            <div class="mb-6 border-b pb-4">
+                <div class="flex items-center gap-3 mb-2">
+                    <i class="material-icons text-4xl text-purple-600">inventory_2</i>
+                    <h2 class="text-2xl font-bold text-blue-600">{{.Name}}</h2>
+                </div>
+                <div class="flex flex-wrap gap-3 mt-3">
+                    <span class="bg-purple-100 text-purple-800 px-3 py-1 rounded-full text-sm font-medium">
+                        <i class="material-icons text-sm align-middle mr-1">label</i>
+                        Tag: {{.Tag}}
+                    </span>
+                    {{if .Image.Config}}
+                    <span class="bg-green-100 text-green-800 px-3 py-1 rounded-full text-sm font-medium">
+                        <i class="material-icons text-sm align-middle mr-1">memory</i>
+                        {{.Image.Config.Architecture}}/{{.Image.Config.OS}}
+                    </span>
+                    {{end}}
+                    <span class="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm font-medium">
+                        <i class="material-icons text-sm align-middle mr-1">sd_storage</i>
+                        <span id="imageSize">{{.Image.Size}} bytes</span>
+                    </span>
+                </div>
+            </div>
+
+            <!-- Digest -->
+            <div class="mb-6">
+                <h3 class="text-lg font-semibold mb-2 flex items-center gap-2">
+                    <i class="material-icons text-gray-600">fingerprint</i>
+                    Digest
+                </h3>
+                <div class="bg-gray-100 p-3 rounded-lg font-mono text-sm break-all">
+                    {{.Image.Digest}}
+                </div>
+            </div>
+
+            <!-- Pull Command -->
+            <div class="mb-6">
+                <h3 class="text-lg font-semibold mb-2 flex items-center gap-2">
+                    <i class="material-icons text-gray-600">terminal</i>
+                    Pull Command
+                </h3>
+                <div class="bg-gray-900 text-green-400 p-4 rounded-lg font-mono text-sm flex justify-between items-center">
+                    <code id="pullCommand">docker pull <span class="portal-host"></span>/{{.Name}}:{{.Tag}}</code>
+                    <button onclick="copyPullCommand()" class="ml-4 text-gray-400 hover:text-white" title="Copy to clipboard">
+                        <i class="material-icons">content_copy</i>
+                    </button>
+                </div>
+            </div>
+
+            {{if .Image.Config}}
+            <!-- Configuration -->
+            <div class="mb-6">
+                <h3 class="text-lg font-semibold mb-2 flex items-center gap-2">
+                    <i class="material-icons text-gray-600">settings</i>
+                    Configuration
+                </h3>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {{if .Image.Config.Config}}
+                    {{if .Image.Config.Config.Entrypoint}}
+                    <div class="bg-gray-50 p-4 rounded-lg border">
+                        <div class="font-medium text-gray-700 mb-2">Entrypoint</div>
+                        <code class="text-sm text-blue-600 break-all">{{range $i, $e := .Image.Config.Config.Entrypoint}}{{if $i}} {{end}}{{$e}}{{end}}</code>
+                    </div>
+                    {{end}}
+                    {{if .Image.Config.Config.Cmd}}
+                    <div class="bg-gray-50 p-4 rounded-lg border">
+                        <div class="font-medium text-gray-700 mb-2">Command</div>
+                        <code class="text-sm text-blue-600 break-all">{{range $i, $e := .Image.Config.Config.Cmd}}{{if $i}} {{end}}{{$e}}{{end}}</code>
+                    </div>
+                    {{end}}
+                    {{if .Image.Config.Config.WorkingDir}}
+                    <div class="bg-gray-50 p-4 rounded-lg border">
+                        <div class="font-medium text-gray-700 mb-2">Working Directory</div>
+                        <code class="text-sm text-blue-600">{{.Image.Config.Config.WorkingDir}}</code>
+                    </div>
+                    {{end}}
+                    {{if .Image.Config.Config.User}}
+                    <div class="bg-gray-50 p-4 rounded-lg border">
+                        <div class="font-medium text-gray-700 mb-2">User</div>
+                        <code class="text-sm text-blue-600">{{.Image.Config.Config.User}}</code>
+                    </div>
+                    {{end}}
+                    {{end}}
+                </div>
+            </div>
+
+            {{if .Image.Config.Config}}
+            {{if .Image.Config.Config.ExposedPorts}}
+            <!-- Exposed Ports -->
+            <div class="mb-6">
+                <h3 class="text-lg font-semibold mb-2 flex items-center gap-2">
+                    <i class="material-icons text-gray-600">hub</i>
+                    Exposed Ports
+                </h3>
+                <div class="flex flex-wrap gap-2">
+                    {{range $port, $_ := .Image.Config.Config.ExposedPorts}}
+                    <span class="bg-orange-100 text-orange-800 px-3 py-1 rounded-full text-sm font-mono">{{$port}}</span>
+                    {{end}}
+                </div>
+            </div>
+            {{end}}
+
+            {{if .Image.Config.Config.Env}}
+            <!-- Environment Variables -->
+            <div class="mb-6">
+                <h3 class="text-lg font-semibold mb-2 flex items-center gap-2">
+                    <i class="material-icons text-gray-600">code</i>
+                    Environment Variables
+                </h3>
+                <div class="bg-gray-900 rounded-lg p-4 overflow-x-auto max-h-64">
+                    <pre class="text-green-400 font-mono text-sm">{{range .Image.Config.Config.Env}}{{.}}
+{{end}}</pre>
+                </div>
+            </div>
+            {{end}}
+
+            {{if .Image.Config.Config.Labels}}
+            <!-- Labels -->
+            <div class="mb-6">
+                <h3 class="text-lg font-semibold mb-2 flex items-center gap-2">
+                    <i class="material-icons text-gray-600">sell</i>
+                    Labels
+                </h3>
+                <div class="bg-gray-50 rounded-lg border overflow-hidden">
+                    <table class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-gray-100">
+                            <tr>
+                                <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Key</th>
+                                <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Value</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-200">
+                            {{range $key, $value := .Image.Config.Config.Labels}}
+                            <tr>
+                                <td class="px-4 py-2 text-sm font-mono text-gray-900 whitespace-nowrap">{{$key}}</td>
+                                <td class="px-4 py-2 text-sm font-mono text-gray-600 break-all">{{$value}}</td>
+                            </tr>
+                            {{end}}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            {{end}}
+            {{end}}
+            {{end}}
+
+            {{if .Image.Layers}}
+            <!-- Layers -->
+            <div class="mb-6">
+                <h3 class="text-lg font-semibold mb-2 flex items-center gap-2">
+                    <i class="material-icons text-gray-600">layers</i>
+                    Layers ({{len .Image.Layers}})
+                </h3>
+                <div class="space-y-2">
+                    {{range $i, $layer := .Image.Layers}}
+                    <div class="bg-gray-50 p-3 rounded-lg border flex justify-between items-center">
+                        <div class="flex items-center gap-3">
+                            <span class="bg-blue-500 text-white w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium">{{$i}}</span>
+                            <div>
+                                <div class="font-mono text-xs text-gray-500 break-all max-w-2xl">{{$layer.Digest}}</div>
+                                <div class="text-xs text-gray-400 mt-1">{{$layer.MediaType}}</div>
+                            </div>
+                        </div>
+                        <span class="layer-size text-sm text-gray-600 font-medium whitespace-nowrap ml-4" data-size="{{$layer.Size}}">{{$layer.Size}} bytes</span>
+                    </div>
+                    {{end}}
+                </div>
+            </div>
+            {{end}}
+
+            {{if .Image.Config}}
+            {{if .Image.Config.History}}
+            <!-- Build History -->
+            <div class="mb-6">
+                <h3 class="text-lg font-semibold mb-2 flex items-center gap-2">
+                    <i class="material-icons text-gray-600">history</i>
+                    Build History
+                </h3>
+                <div class="bg-gray-900 rounded-lg p-4 overflow-x-auto max-h-96">
+                    <div class="space-y-2">
+                        {{range $i, $h := .Image.Config.History}}
+                        <div class="text-sm font-mono {{if $h.EmptyLayer}}text-gray-500{{else}}text-green-400{{end}}">
+                            <span class="text-gray-500 mr-2">#{{$i}}</span>
+                            {{if $h.EmptyLayer}}<span class="text-yellow-500">[empty]</span> {{end}}
+                            <span class="break-all">{{$h.CreatedBy}}</span>
+                        </div>
+                        {{end}}
+                    </div>
+                </div>
+            </div>
+            {{end}}
+            {{end}}
+
+            <!-- Actions -->
+            <div class="flex gap-4 pt-4 border-t">
+                <a href="/"
+                    class="flex items-center gap-2 bg-gray-500 text-white px-4 py-2 rounded hover:bg-gray-600">
+                    <i class="material-icons">arrow_back</i>
+                    Back to List
+                </a>
+                <button onclick="deleteImage()"
+                    class="flex items-center gap-2 bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600">
+                    <i class="material-icons">delete</i>
+                    Delete Image
+                </button>
+            </div>
+        </div>
+    </main>
+</body>
+<script>
+    // Format bytes to human readable
+    function formatBytes(bytes) {
+        if (bytes === 0) return '0 B';
+        const k = 1024;
+        const sizes = ['B', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    }
+
+    // Format all sizes on page load
+    document.addEventListener('DOMContentLoaded', function() {
+        // Format image size
+        const imageSizeEl = document.getElementById('imageSize');
+        if (imageSizeEl) {
+            const size = parseInt(imageSizeEl.textContent);
+            if (!isNaN(size)) {
+                imageSizeEl.textContent = formatBytes(size);
+            }
+        }
+
+        // Format layer sizes
+        document.querySelectorAll('.layer-size').forEach(el => {
+            const size = parseInt(el.dataset.size);
+            if (!isNaN(size)) {
+                el.textContent = formatBytes(size);
+            }
+        });
+
+        // Set portal host in pull command
+        const portalHost = window.location.host;
+        document.querySelectorAll('.portal-host').forEach(el => {
+            el.textContent = portalHost;
+        });
+    });
+
+    // Copy pull command to clipboard
+    function copyPullCommand() {
+        const pullCommand = document.getElementById('pullCommand').textContent;
+        navigator.clipboard.writeText(pullCommand).then(() => {
+            // Show feedback
+            const btn = event.currentTarget;
+            const icon = btn.querySelector('i');
+            const originalText = icon.textContent;
+            icon.textContent = 'check';
+            setTimeout(() => { icon.textContent = originalText; }, 2000);
+        });
+    }
+
+    // Delete image
+    function deleteImage() {
+        const name = '{{.Name}}';
+        const tag = '{{.Tag}}';
+        if (confirm(`Are you sure you want to delete ${name}:${tag}?`)) {
+            fetch(`/image/${name}/${tag}`, {
+                method: 'DELETE'
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.message) {
+                    window.location.href = '/';
+                } else {
+                    alert('Failed to delete image: ' + (data.error || 'Unknown error'));
+                }
+            })
+            .catch(err => {
+                alert('Error deleting image: ' + err);
+            });
+        }
+    }
+</script>
+
+</html>
