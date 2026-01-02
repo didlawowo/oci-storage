@@ -15,6 +15,9 @@ spec:
   template:
     metadata:
       labels: {{- include "application.labels" . | nindent 8 }}
+      {{- with .Values.podAnnotations }}
+      annotations: {{- toYaml . | nindent 8 }}
+      {{- end }}
     spec:
       serviceAccountName: {{  .Values.serviceAccount.name }}
       initContainers: {{- toYaml .Values.initContainers | nindent 8 }}
