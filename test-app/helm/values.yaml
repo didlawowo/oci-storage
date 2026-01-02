@@ -1,11 +1,11 @@
 replicaCount: 1
 
-# Enable Kyverno image rewriting to use OCI Portal proxy
-podAnnotations:
-  oci-portal: "true"
+# Kyverno image rewriting is now enabled by default
+# Use oci-portal-skip: "true" to exclude from proxy
+podAnnotations: {}
 
-imagePullSecrets:
-- name: oci-storage-registry
+# No imagePullSecrets needed - proxy allows anonymous read
+imagePullSecrets: []
 
 # Use docker.io image - Kyverno will rewrite to oci-storage proxy
 image:

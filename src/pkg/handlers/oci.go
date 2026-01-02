@@ -263,9 +263,7 @@ func (h *OCIHandler) HandleManifest(c *fiber.Ctx) error {
 	}
 
 	// Not found locally - try proxy if enabled
-	// For GET requests: always try proxy for missing manifests (including by digest)
-	// For HEAD requests on tags: return 404 to allow push to proceed
-	// For HEAD requests on digests: try proxy (needed for multi-arch image pulls)
+	// For GET and HEAD requests: always try proxy for missing manifests
 	// NEVER proxy for "charts/" namespace - those are local Helm charts only
 	shouldProxy := h.proxyService != nil && h.proxyService.IsEnabled() && !strings.HasPrefix(name, "charts/")
 	isDigestRef := strings.HasPrefix(reference, "sha256:")
@@ -279,7 +277,7 @@ func (h *OCIHandler) HandleManifest(c *fiber.Ctx) error {
 		"isDigestRef":      isDigestRef,
 	}).Debug("Proxy decision")
 
-	if shouldProxy && (c.Method() == "GET" || (c.Method() == "HEAD" && isDigestRef)) {
+	if shouldProxy && (c.Method() == "GET" || c.Method() == "HEAD") {
 		h.log.WithFunc().WithFields(logrus.Fields{
 			"name":      name,
 			"reference": reference,
