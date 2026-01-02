@@ -1,6 +1,7 @@
 fullnameOverride: oci-storage
 namespace: oci-storage
-podAnnotations: {}
+podAnnotations:
+  oci-portal-skip: "true"
 image:
   repository: fizzbuzz2/oci-storage
   tag: "a92b7c4"
