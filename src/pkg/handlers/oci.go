@@ -185,10 +185,10 @@ func (h *OCIHandler) HandleManifest(c *fiber.Ctx) error {
 	}
 
 	// Not found locally - try proxy if enabled
-	// ONLY proxy for paths starting with "proxy/" AND only for GET requests
-	// HEAD requests should never proxy - they're used by push clients to check existence
+	// ONLY proxy for paths starting with "proxy/" - this protects charts/ and images/ from being proxied
+	// HEAD requests are allowed for proxy paths (needed for container runtime manifest checks)
 	isProxyPath := strings.HasPrefix(name, "proxy/")
-	shouldProxy := h.proxyService != nil && h.proxyService.IsEnabled() && isProxyPath && c.Method() == "GET"
+	shouldProxy := h.proxyService != nil && h.proxyService.IsEnabled() && isProxyPath
 
 	h.log.WithFunc().WithFields(logrus.Fields{
 		"shouldProxy":     shouldProxy,
