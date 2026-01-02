@@ -124,3 +124,34 @@ func (h *OCIHandler) GetBlobDeepNested4(c *fiber.Ctx) error {
 	c.Locals("name", h.getDeepNestedName4(c))
 	return h.GetBlob(c)
 }
+
+// 5-segment nested handlers (e.g., proxy/ghcr.io/actions/gha-runner-scale-set-controller)
+
+func (h *OCIHandler) getDeepNestedName5(c *fiber.Ctx) string {
+	ns1 := c.Params("ns1")
+	ns2 := c.Params("ns2")
+	ns3 := c.Params("ns3")
+	ns4 := c.Params("ns4")
+	name := c.Params("name")
+	return ns1 + "/" + ns2 + "/" + ns3 + "/" + ns4 + "/" + name
+}
+
+func (h *OCIHandler) HandleListTagsDeepNested5(c *fiber.Ctx) error {
+	c.Locals("name", h.getDeepNestedName5(c))
+	return h.HandleListTags(c)
+}
+
+func (h *OCIHandler) HandleManifestDeepNested5(c *fiber.Ctx) error {
+	c.Locals("name", h.getDeepNestedName5(c))
+	return h.HandleManifest(c)
+}
+
+func (h *OCIHandler) HeadBlobDeepNested5(c *fiber.Ctx) error {
+	c.Locals("name", h.getDeepNestedName5(c))
+	return h.HeadBlob(c)
+}
+
+func (h *OCIHandler) GetBlobDeepNested5(c *fiber.Ctx) error {
+	c.Locals("name", h.getDeepNestedName5(c))
+	return h.GetBlob(c)
+}

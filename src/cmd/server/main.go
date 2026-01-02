@@ -245,6 +245,13 @@ func main() {
 	ociGroup.Head("/:ns1/:ns2/:ns3/:name/blobs/:digest", ociHandler.HeadBlobDeepNested4)
 	ociGroup.Get("/:ns1/:ns2/:ns3/:name/blobs/:digest", ociHandler.GetBlobDeepNested4)
 
+	// Proxy paths with 5 segments (proxy/registry/org/repo/image) - e.g., proxy/ghcr.io/actions/gha-runner-scale-set-controller
+	ociGroup.Get("/:ns1/:ns2/:ns3/:ns4/:name/tags/list", ociHandler.HandleListTagsDeepNested5)
+	ociGroup.Head("/:ns1/:ns2/:ns3/:ns4/:name/manifests/:reference", ociHandler.HandleManifestDeepNested5)
+	ociGroup.Get("/:ns1/:ns2/:ns3/:ns4/:name/manifests/:reference", ociHandler.HandleManifestDeepNested5)
+	ociGroup.Head("/:ns1/:ns2/:ns3/:ns4/:name/blobs/:digest", ociHandler.HeadBlobDeepNested5)
+	ociGroup.Get("/:ns1/:ns2/:ns3/:ns4/:name/blobs/:digest", ociHandler.GetBlobDeepNested5)
+
 	// Démarrage du serveur
 	port := ":3030"
 	log.WithField("port", port).Info("Starting server")
