@@ -38,9 +38,11 @@ type Backup struct {
 
 // RegistryConfig defines an upstream registry for proxying
 type RegistryConfig struct {
-	Name    string `yaml:"name"`    // e.g., "docker.io", "ghcr.io"
-	URL     string `yaml:"url"`     // e.g., "https://registry-1.docker.io"
-	Default bool   `yaml:"default"` // Is this the default registry?
+	Name     string `yaml:"name"`              // e.g., "docker.io", "ghcr.io"
+	URL      string `yaml:"url"`               // e.g., "https://registry-1.docker.io"
+	Default  bool   `yaml:"default"`           // Is this the default registry?
+	Username string `yaml:"username,omitempty"` // Optional username for auth
+	Password string `yaml:"password,omitempty"` // Optional password/token for auth
 }
 
 // CacheConfig defines cache settings for the proxy

@@ -200,6 +200,15 @@ func (s *ProxyService) fetchWithAuth(ctx context.Context, req *http.Request, reg
 		"method": req.Method,
 	}).Debug("Making upstream request")
 
+	// Find registry config to get credentials
+	var regConfig *config.RegistryConfig
+	for i := range s.config.Proxy.Registries {
+		if s.config.Proxy.Registries[i].URL == registryURL {
+			regConfig = &s.config.Proxy.Registries[i]
+			break
+		}
+	}
+
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
 		s.log.WithError(err).Error("Upstream request failed")
@@ -214,7 +223,7 @@ func (s *ProxyService) fetchWithAuth(ctx context.Context, req *http.Request, reg
 		s.log.Debug("Got 401, fetching auth token...")
 
 		wwwAuth := resp.Header.Get("Www-Authenticate")
-		token, err := s.getAnonymousToken(ctx, wwwAuth, name)
+		token, err := s.getToken(ctx, wwwAuth, name, regConfig)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get auth token: %w", err)
 		}
@@ -228,8 +237,8 @@ func (s *ProxyService) fetchWithAuth(ctx context.Context, req *http.Request, reg
 	return resp, nil
 }
 
-// getAnonymousToken parses WWW-Authenticate and fetches anonymous token
-func (s *ProxyService) getAnonymousToken(ctx context.Context, wwwAuth, name string) (string, error) {
+// getToken parses WWW-Authenticate and fetches token (with optional credentials)
+func (s *ProxyService) getToken(ctx context.Context, wwwAuth, name string, regConfig *config.RegistryConfig) (string, error) {
 	// Parse: Bearer realm="https://auth.docker.io/token",service="registry.docker.io",scope="repository:library/alpine:pull"
 	params := s.parseWwwAuthenticate(wwwAuth)
 
@@ -244,11 +253,20 @@ func (s *ProxyService) getAnonymousToken(ctx context.Context, wwwAuth, name stri
 
 	tokenURL := fmt.Sprintf("%s?service=%s&scope=%s", realm, service, scope)
 
-	s.log.WithField("tokenURL", tokenURL).Debug("Fetching auth token")
+	s.log.WithFields(logrus.Fields{
+		"tokenURL":    tokenURL,
+		"hasCredentials": regConfig != nil && regConfig.Username != "",
+	}).Debug("Fetching auth token")
 
 	req, err := http.NewRequestWithContext(ctx, "GET", tokenURL, nil)
 	if err != nil {
 		return "", err
+	}
+
+	// Add Basic Auth if credentials are configured for this registry
+	if regConfig != nil && regConfig.Username != "" && regConfig.Password != "" {
+		req.SetBasicAuth(regConfig.Username, regConfig.Password)
+		s.log.WithField("username", regConfig.Username).Debug("Using credentials for token request")
 	}
 
 	resp, err := s.httpClient.Do(req)
