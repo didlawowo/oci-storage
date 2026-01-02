@@ -482,6 +482,7 @@ func (h *OCIHandler) prefetchPlatformManifests(index models.OCIIndex, registryUR
 }
 
 // sendManifestResponse sends a manifest response to the client
+// For manifest lists/indexes, it automatically resolves to the platform-specific manifest
 func (h *OCIHandler) sendManifestResponse(c *fiber.Ctx, manifestData []byte, reference string) error {
 	h.log.WithFunc().WithField("dataLen", len(manifestData)).Debug("sendManifestResponse called")
 	digest := fmt.Sprintf("sha256:%x", sha256.Sum256(manifestData))
@@ -498,7 +499,38 @@ func (h *OCIHandler) sendManifestResponse(c *fiber.Ctx, manifestData []byte, ref
 	// Determine content type from manifest
 	var manifest models.OCIManifest
 	if err := json.Unmarshal(manifestData, &manifest); err == nil && manifest.MediaType != "" {
-		c.Set("Content-Type", manifest.MediaType)
+		// Check if this is a manifest list/index - if so, resolve to platform-specific manifest
+		if manifest.MediaType == models.MediaTypeOCIManifestList ||
+			manifest.MediaType == models.MediaTypeDockerManifestList {
+
+			// Try to resolve to a platform-specific manifest
+			resolvedData, resolvedDigest, err := h.resolvePlatformManifest(c, manifestData)
+			if err == nil && resolvedData != nil {
+				h.log.WithFields(logrus.Fields{
+					"originalDigest":  digest,
+					"resolvedDigest":  resolvedDigest,
+					"resolvedSize":    len(resolvedData),
+				}).Info("Resolved manifest list to platform-specific manifest")
+
+				// Use the resolved manifest instead
+				manifestData = resolvedData
+				digest = resolvedDigest
+
+				// Re-parse to get the correct media type
+				var resolvedManifest models.OCIManifest
+				if err := json.Unmarshal(manifestData, &resolvedManifest); err == nil && resolvedManifest.MediaType != "" {
+					c.Set("Content-Type", resolvedManifest.MediaType)
+				} else {
+					c.Set("Content-Type", models.MediaTypeOCIManifest)
+				}
+			} else {
+				// Failed to resolve, return the index as-is (might still work for some clients)
+				h.log.WithError(err).Warn("Failed to resolve platform manifest, returning index")
+				c.Set("Content-Type", manifest.MediaType)
+			}
+		} else {
+			c.Set("Content-Type", manifest.MediaType)
+		}
 	} else {
 		c.Set("Content-Type", "application/vnd.oci.image.manifest.v1+json")
 	}
@@ -512,6 +544,94 @@ func (h *OCIHandler) sendManifestResponse(c *fiber.Ctx, manifestData []byte, ref
 	}
 
 	return c.Send(manifestData)
+}
+
+// resolvePlatformManifest resolves a manifest list/index to a platform-specific manifest
+func (h *OCIHandler) resolvePlatformManifest(c *fiber.Ctx, indexData []byte) ([]byte, string, error) {
+	var index models.OCIIndex
+	if err := json.Unmarshal(indexData, &index); err != nil {
+		return nil, "", fmt.Errorf("failed to parse manifest index: %w", err)
+	}
+
+	// Detect client platform preference
+	preferredOS, preferredArch := h.detectClientPlatform(c)
+
+	h.log.WithFields(logrus.Fields{
+		"preferredOS":   preferredOS,
+		"preferredArch": preferredArch,
+		"manifestCount": len(index.Manifests),
+	}).Debug("Resolving platform manifest")
+
+	// Find matching platform manifest
+	var matchingDesc *models.OCIDescriptor
+	var fallbackDesc *models.OCIDescriptor
+
+	for i := range index.Manifests {
+		desc := &index.Manifests[i]
+		if desc.Platform == nil {
+			continue
+		}
+
+		// Exact match
+		if desc.Platform.OS == preferredOS && desc.Platform.Architecture == preferredArch {
+			matchingDesc = desc
+			break
+		}
+
+		// Keep first linux/amd64 as fallback
+		if fallbackDesc == nil && desc.Platform.OS == "linux" && desc.Platform.Architecture == "amd64" {
+			fallbackDesc = desc
+		}
+	}
+
+	// Use fallback if no exact match
+	if matchingDesc == nil {
+		matchingDesc = fallbackDesc
+	}
+
+	if matchingDesc == nil {
+		return nil, "", fmt.Errorf("no matching platform manifest found for %s/%s", preferredOS, preferredArch)
+	}
+
+	h.log.WithFields(logrus.Fields{
+		"platform": matchingDesc.Platform.OS + "/" + matchingDesc.Platform.Architecture,
+		"digest":   matchingDesc.Digest,
+	}).Debug("Found matching platform manifest")
+
+	// Fetch the platform-specific manifest from cache (should be there from prefetch)
+	blobPath := h.pathManager.GetBlobPath(matchingDesc.Digest)
+	manifestData, err := os.ReadFile(blobPath)
+	if err != nil {
+		return nil, "", fmt.Errorf("platform manifest not in cache: %w", err)
+	}
+
+	return manifestData, matchingDesc.Digest, nil
+}
+
+// detectClientPlatform detects the client's platform preference from headers
+func (h *OCIHandler) detectClientPlatform(c *fiber.Ctx) (string, string) {
+	// Default to linux/amd64 - the most common platform
+	preferredOS := "linux"
+	preferredArch := "amd64"
+
+	// Check for platform hints in headers
+	// Some clients send platform info in custom headers or user-agent
+	userAgent := c.Get("User-Agent")
+
+	// containerd/cri-o often include platform info
+	if strings.Contains(strings.ToLower(userAgent), "arm64") ||
+		strings.Contains(strings.ToLower(userAgent), "aarch64") {
+		preferredArch = "arm64"
+	}
+
+	// Check Accept header for platform-specific media types
+	accept := c.Get("Accept")
+	h.log.WithFields(logrus.Fields{
+		"userAgent": userAgent,
+		"accept":    accept,
+	}).Debug("Detecting client platform")
+
+	return preferredOS, preferredArch
 }
 
 // findManifest searches for a manifest in all possible locations
