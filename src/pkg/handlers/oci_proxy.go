@@ -17,7 +17,7 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-// proxyBlob fetches a blob from upstream and caches it while streaming to client
+// proxyBlob fetches a blob from upstream, caches it completely, then serves from cache
 func (h *OCIHandler) proxyBlob(c *fiber.Ctx, name, digest string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -46,6 +46,8 @@ func (h *OCIHandler) proxyBlob(c *fiber.Ctx, name, digest string) error {
 		h.log.WithError(err).Warn("Failed to create blob directory")
 	}
 
+	// Download completely to cache first, then serve from cache
+	// This prevents race conditions with concurrent requests
 	file, err := os.Create(blobPath)
 	if err != nil {
 		h.log.WithError(err).Warn("Failed to create blob cache file, streaming without caching")
@@ -56,22 +58,24 @@ func (h *OCIHandler) proxyBlob(c *fiber.Ctx, name, digest string) error {
 		}
 		return c.SendStream(reader)
 	}
-	defer file.Close()
 
-	teeReader := io.TeeReader(reader, file)
-
-	c.Set("Docker-Content-Digest", digest)
-	c.Set("Content-Type", "application/octet-stream")
-	if size > 0 {
-		c.Set("Content-Length", fmt.Sprintf("%d", size))
+	written, err := io.Copy(file, reader)
+	file.Close()
+	if err != nil {
+		h.log.WithError(err).Error("Failed to download blob to cache")
+		os.Remove(blobPath)
+		return c.SendStatus(502)
 	}
 
 	h.log.WithFunc().WithFields(logrus.Fields{
 		"digest": digest,
-		"size":   size,
+		"size":   written,
 	}).Info("Blob proxied and cached successfully")
 
-	return c.SendStream(teeReader)
+	// Serve from cache
+	c.Set("Docker-Content-Digest", digest)
+	c.Set("Content-Type", "application/octet-stream")
+	return c.SendFile(blobPath)
 }
 
 // proxyManifest fetches a manifest from upstream and caches it
