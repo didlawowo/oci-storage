@@ -16,7 +16,8 @@ metadata:
       Add annotation 'oci-portal-skip: "true"' to exclude a pod from rewriting.
 spec:
   rules:
-    - name: rewrite-docker-io-images
+    # Rule 1: Rewrite images with explicit registry domain (e.g., ghcr.io/user/repo, docker.io/library/nginx)
+    - name: rewrite-registry-images
       match:
         any:
           - resources:
@@ -39,6 +40,10 @@ spec:
                 - key: "{{ `{{ regex_match('^` }}{{ .Values.kyverno.portalHost | replace "." "\\\\." }}{{ `/.*', element.image) }}` }}"
                   operator: NotEquals
                   value: "true"
+                # Only match images with a registry domain (contains a dot in first segment)
+                - key: "{{ `{{ regex_match('^[a-zA-Z0-9][a-zA-Z0-9.-]*\\.[a-zA-Z0-9]+/', element.image) }}` }}"
+                  operator: Equals
+                  value: "true"
             patchStrategicMerge:
               spec:
                 containers:
@@ -47,4 +52,45 @@ spec:
                     # - eu.gcr.io/datadoghq/agent:7.71.2 -> portalHost/proxy/eu.gcr.io/datadoghq/agent:7.71.2
                     # - docker.io/nginx:latest -> portalHost/proxy/docker.io/nginx:latest
                     image: "{{ `{{regex_replace_all('^([a-zA-Z0-9][a-zA-Z0-9.-]*\\.[a-zA-Z0-9]+)/(.*)$', element.image, '` }}{{ .Values.kyverno.portalHost }}{{ `/proxy/$1/$2')}}` }}"
+    # Rule 2: Rewrite DockerHub images without explicit domain (e.g., nginx:latest, fizzbuzz2/app:v1)
+    - name: rewrite-dockerhub-implicit
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              annotations:
+                oci-portal-skip: "true"
+      mutate:
+        foreach:
+          - list: "request.object.spec.containers"
+            preconditions:
+              all:
+                # Skip images that already point to the portal
+                - key: "{{ `{{element.image}}` }}"
+                  operator: NotEquals
+                  value: "{{ .Values.kyverno.portalHost }}/*"
+                - key: "{{ `{{ regex_match('^` }}{{ .Values.kyverno.portalHost | replace "." "\\\\." }}{{ `/.*', element.image) }}` }}"
+                  operator: NotEquals
+                  value: "true"
+                # Only match images WITHOUT a registry domain (no dot in first segment before slash)
+                # This catches: nginx:latest, fizzbuzz2/app:v1, library/postgres:16
+                - key: "{{ `{{ regex_match('^[a-zA-Z0-9][a-zA-Z0-9.-]*\\.[a-zA-Z0-9]+/', element.image) }}` }}"
+                  operator: NotEquals
+                  value: "true"
+                # Must have at least one character (not empty)
+                - key: "{{ `{{ regex_match('^.+$', element.image) }}` }}"
+                  operator: Equals
+                  value: "true"
+            patchStrategicMerge:
+              spec:
+                containers:
+                  - name: "{{ `{{element.name}}` }}"
+                    # Prepend docker.io for implicit DockerHub images:
+                    # - nginx:latest -> portalHost/proxy/docker.io/nginx:latest
+                    # - fizzbuzz2/app:v1 -> portalHost/proxy/docker.io/fizzbuzz2/app:v1
+                    image: "{{ .Values.kyverno.portalHost }}/proxy/docker.io/{{ `{{element.image}}` }}"
 {{- end }}
