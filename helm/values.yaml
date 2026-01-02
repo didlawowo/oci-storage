@@ -4,7 +4,7 @@ podAnnotations:
   oci-portal-skip: "true"
 image:
   repository: fizzbuzz2/oci-storage
-  tag: "d16b816"
+  tag: "ghcr-auth"
   pullPolicy: "Always"
   pullSecrets: []
 strategy:
@@ -164,6 +164,20 @@ env:
 #   value: "backup"
 # - name: AZURE_STORAGE_ACCOUNT_KEY
 #   value: "your-storage-key"
+
+# Registry credentials for proxy (loaded from secrets)
+- name: GHCR_USERNAME
+  valueFrom:
+    secretKeyRef:
+      name: ghcr-credentials
+      key: username
+      optional: true
+- name: GHCR_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: ghcr-credentials
+      key: password
+      optional: true
 envFrom: []
 # Secret pour les credentials d'authentification (activer après création du secret)
 # - secretRef:
@@ -177,7 +191,7 @@ externalSecrets:
   secrets: []
 # Kyverno policy for image rewriting
 kyverno:
-  enabled: true
+  enabled: false
   # The hostname of the OCI portal (without protocol)
   # e.g., "oci-storage.example.com" or "oci-storage:3030"
   portalHost: "oci-storage.dc-tech.work"

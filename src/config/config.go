@@ -171,8 +171,48 @@ func loadConfigFromEnv(config *Config) {
 		}
 	}
 
+	// Load registry credentials from environment variables
+	loadRegistryCredentialsFromEnv(config)
+
 	// Load auth users from environment variables
 	loadAuthFromEnv(config)
+}
+
+// loadRegistryCredentialsFromEnv loads registry credentials from environment variables
+// Format: REGISTRY_<NAME>_USERNAME and REGISTRY_<NAME>_PASSWORD
+// Example: GHCR_USERNAME, GHCR_PASSWORD for ghcr.io
+func loadRegistryCredentialsFromEnv(config *Config) {
+	// Map of registry names to env var prefixes
+	registryEnvPrefixes := map[string]string{
+		"ghcr.io":    "GHCR",
+		"docker.io":  "DOCKERHUB",
+		"gcr.io":     "GCR",
+		"quay.io":    "QUAY",
+	}
+
+	for i := range config.Proxy.Registries {
+		reg := &config.Proxy.Registries[i]
+
+		// Check for specific env var prefix for this registry
+		if prefix, ok := registryEnvPrefixes[reg.Name]; ok {
+			if username := os.Getenv(prefix + "_USERNAME"); username != "" {
+				reg.Username = username
+			}
+			if password := os.Getenv(prefix + "_PASSWORD"); password != "" {
+				reg.Password = password
+			}
+		}
+
+		// Also support generic format: REGISTRY_<NAME>_USERNAME
+		// Convert registry name to env-safe format (e.g., ghcr.io -> GHCR_IO)
+		envName := strings.ToUpper(strings.ReplaceAll(strings.ReplaceAll(reg.Name, ".", "_"), "-", "_"))
+		if username := os.Getenv("REGISTRY_" + envName + "_USERNAME"); username != "" {
+			reg.Username = username
+		}
+		if password := os.Getenv("REGISTRY_" + envName + "_PASSWORD"); password != "" {
+			reg.Password = password
+		}
+	}
 }
 
 // loadAuthFromEnv charge les utilisateurs depuis les variables d'environnement
