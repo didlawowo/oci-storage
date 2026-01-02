@@ -178,6 +178,18 @@ env:
       name: ghcr-credentials
       key: password
       optional: true
+- name: DOCKERHUB_USERNAME
+  valueFrom:
+    secretKeyRef:
+      name: dockerhub-credentials
+      key: username
+      optional: true
+- name: DOCKERHUB_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: dockerhub-credentials
+      key: password
+      optional: true
 envFrom: []
 # Secret pour les credentials d'authentification (activer après création du secret)
 # - secretRef:
