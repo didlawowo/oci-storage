@@ -17,14 +17,16 @@ import (
 )
 
 // sendManifestResponse sends a manifest response to the client
-// For manifest lists/indexes, we return the list as-is and let the client handle platform selection
-// This is the standard OCI behavior - clients like containerd know how to handle manifest lists
+// For manifest lists/indexes, it conditionally resolves to a platform-specific manifest based on:
+// - Reference type: only resolve for tags, never for digests (client expects exact content)
+// - Accept header: only resolve if client doesn't support manifest lists
 func (h *OCIHandler) sendManifestResponse(c *fiber.Ctx, manifestData []byte, reference string) error {
 	h.log.WithFunc().WithField("dataLen", len(manifestData)).Debug("sendManifestResponse called")
 	digest := fmt.Sprintf("sha256:%x", sha256.Sum256(manifestData))
 
 	// Verify digest if reference is a digest
-	if strings.HasPrefix(reference, "sha256:") && digest != reference {
+	isDigestRef := strings.HasPrefix(reference, "sha256:")
+	if isDigestRef && digest != reference {
 		h.log.WithFunc().WithFields(logrus.Fields{
 			"expected": reference,
 			"got":      digest,
@@ -35,7 +37,53 @@ func (h *OCIHandler) sendManifestResponse(c *fiber.Ctx, manifestData []byte, ref
 	// Determine content type from manifest
 	var manifest models.OCIManifest
 	if err := json.Unmarshal(manifestData, &manifest); err == nil && manifest.MediaType != "" {
-		c.Set("Content-Type", manifest.MediaType)
+		// Check if this is a manifest list/index
+		isManifestList := manifest.MediaType == models.MediaTypeOCIManifestList ||
+			manifest.MediaType == models.MediaTypeDockerManifestList
+
+		if isManifestList {
+			// Decide whether to resolve to platform-specific manifest
+			// NEVER resolve if client requested by digest - they know what they want
+			// Only resolve if client doesn't support manifest lists (based on Accept header)
+			clientSupportsIndex := h.clientSupportsManifestList(c)
+
+			h.log.WithFields(logrus.Fields{
+				"isDigestRef":         isDigestRef,
+				"clientSupportsIndex": clientSupportsIndex,
+				"mediaType":           manifest.MediaType,
+			}).Debug("Manifest list detected, checking if resolution needed")
+
+			shouldResolve := !isDigestRef && !clientSupportsIndex
+
+			if shouldResolve {
+				resolvedData, resolvedDigest, err := h.resolvePlatformManifest(c, manifestData)
+				if err == nil && resolvedData != nil {
+					h.log.WithFields(logrus.Fields{
+						"originalDigest": digest,
+						"resolvedDigest": resolvedDigest,
+						"resolvedSize":   len(resolvedData),
+					}).Info("Resolved manifest list to platform-specific manifest")
+
+					manifestData = resolvedData
+					digest = resolvedDigest
+
+					var resolvedManifest models.OCIManifest
+					if err := json.Unmarshal(manifestData, &resolvedManifest); err == nil && resolvedManifest.MediaType != "" {
+						c.Set("Content-Type", resolvedManifest.MediaType)
+					} else {
+						c.Set("Content-Type", models.MediaTypeOCIManifest)
+					}
+				} else {
+					h.log.WithError(err).Debug("Failed to resolve platform manifest, returning index")
+					c.Set("Content-Type", manifest.MediaType)
+				}
+			} else {
+				// Client supports manifest lists or requested by digest - return as-is
+				c.Set("Content-Type", manifest.MediaType)
+			}
+		} else {
+			c.Set("Content-Type", manifest.MediaType)
+		}
 	} else {
 		c.Set("Content-Type", "application/vnd.oci.image.manifest.v1+json")
 	}
@@ -48,6 +96,28 @@ func (h *OCIHandler) sendManifestResponse(c *fiber.Ctx, manifestData []byte, ref
 	}
 
 	return c.Send(manifestData)
+}
+
+// clientSupportsManifestList checks if the client supports manifest lists based on Accept header
+func (h *OCIHandler) clientSupportsManifestList(c *fiber.Ctx) bool {
+	accept := c.Get("Accept")
+
+	// If no Accept header, assume modern client that supports manifest lists
+	if accept == "" {
+		return true
+	}
+
+	// Check for manifest list/index media types in Accept header
+	supportsIndex := strings.Contains(accept, models.MediaTypeOCIManifestList) ||
+		strings.Contains(accept, models.MediaTypeDockerManifestList) ||
+		strings.Contains(accept, "*/*")
+
+	h.log.WithFields(logrus.Fields{
+		"accept":        accept,
+		"supportsIndex": supportsIndex,
+	}).Debug("Checking client manifest list support")
+
+	return supportsIndex
 }
 
 // resolvePlatformManifest resolves a manifest list/index to a platform-specific manifest
