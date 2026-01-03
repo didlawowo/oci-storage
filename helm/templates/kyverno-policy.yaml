@@ -76,9 +76,7 @@ spec:
                 - kube-system
                 - kube-public
                 - kube-node-lease
-                - cilium
-                - cilium-secrets
-                - kyverno
+                - cnpg-system
                 - security
                 - longhorn-system
       preconditions:
