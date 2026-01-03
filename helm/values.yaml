@@ -4,7 +4,7 @@ podAnnotations:
   oci-portal-skip: "true"
 image:
   repository: fizzbuzz2/oci-storage
-  tag: "efc2371"
+  tag: "6ba60b4"
   pullPolicy: "Always"
   pullSecrets: []
 strategy:
@@ -133,22 +133,6 @@ env:
     # Auth configuration - Choisir UNE des 3 options :
 
     value: "admin:secret123,dev:devpass,readonly:readpass"
-  # GCP config  
-  # - name: GCP_BUCKET
-  #   value: "oci-storage-backup"
-  # - name: GCP_PROJECT_ID
-  #   value: "your-project-id"
-  # - name: GCP_CREDENTIALS_FILE
-  #   value: "/path/to/credentials.json"
-
-  # Azure config
-  # - name: AZURE_STORAGE_ACCOUNT
-  #   value: "helmportalbackup"
-  # - name: AZURE_CONTAINER
-  #   value: "backup"
-  # - name: AZURE_STORAGE_ACCOUNT_KEY
-  #   value: "your-storage-key"
-
   # Registry credentials for proxy (loaded from secrets)
   - name: GHCR_USERNAME
     # Backup configuration (si activé)
@@ -156,6 +140,22 @@ env:
     #   value: "true"
     # - name: BACKUP_PROVIDER
     #   value: "aws"  # ou "gcp" ou "azure"
+
+    # Azure config
+    # - name: AZURE_STORAGE_ACCOUNT
+    #   value: "helmportalbackup"
+    # - name: AZURE_CONTAINER
+    #   value: "backup"
+    # - name: AZURE_STORAGE_ACCOUNT_KEY
+    #   value: "your-storage-key"
+
+    # GCP config  
+    # - name: GCP_BUCKET
+    #   value: "oci-storage-backup"
+    # - name: GCP_PROJECT_ID
+    #   value: "your-project-id"
+    # - name: GCP_CREDENTIALS_FILE
+    #   value: "/path/to/credentials.json"
 
     # AWS config
     # - name: AWS_BUCKET
@@ -166,7 +166,6 @@ env:
     #   value: "your-access-key"
     # - name: AWS_SECRET_ACCESS_KEY
     #   value: "your-secret-key"
-
     valueFrom:
       secretKeyRef:
         name: ghcr-credentials
