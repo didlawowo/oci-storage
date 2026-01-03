@@ -79,6 +79,7 @@ spec:
                 - cilium-secrets
                 - kyverno
                 - security
+                - longhorn-system
       preconditions:
         all:
           - key: "{{ `{{ request.object.spec.initContainers[] || ` }}{{ "`[]`" }}{{ ` | length(@) }}` }}"
