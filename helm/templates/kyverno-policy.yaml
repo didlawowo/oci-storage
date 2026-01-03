@@ -19,9 +19,11 @@ metadata:
       Add annotation 'oci-portal-skip: "true"' to exclude a pod from rewriting.
 spec:
   background: false
+  validationFailureAction: Audit
   rules:
     # Rewrite container images to use the proxy
     - name: rewrite-container-images
+      skipBackgroundRequests: true
       match:
         any:
           - resources:
@@ -58,6 +60,7 @@ spec:
                     image: "{{ .Values.kyverno.portalHost }}/proxy/{{ `{{ image_normalize('{{element.image}}') }}` }}"
     # Rewrite initContainer images
     - name: rewrite-initcontainer-images
+      skipBackgroundRequests: true
       match:
         any:
           - resources:
