@@ -28,6 +28,14 @@ spec:
           - resources:
               annotations:
                 oci-portal-skip: "true"
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+                - cilium
+                - cilium-secrets
+                - kyverno
       mutate:
         foreach:
           - list: "request.object.spec.containers"
@@ -64,6 +72,14 @@ spec:
           - resources:
               annotations:
                 oci-portal-skip: "true"
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+                - cilium
+                - cilium-secrets
+                - kyverno
       mutate:
         foreach:
           - list: "request.object.spec.containers"
