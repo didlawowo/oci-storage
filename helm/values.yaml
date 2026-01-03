@@ -4,7 +4,7 @@ podAnnotations:
   oci-portal-skip: "true"
 image:
   repository: fizzbuzz2/oci-storage
-  tag: "cf15073"
+  tag: "7c2380e"
   pullPolicy: "Always"
   pullSecrets: []
 strategy:
@@ -23,7 +23,8 @@ serviceAccount:
   create: true
   name: oci-storage
   annotations: {}
-nodeSelector: {}
+nodeSelector:
+  kubernetes.io/hostname: ryzen
 tolerations: []
 affinity: {}
 initContainers:
@@ -44,7 +45,7 @@ resources:
 persistentVolumesClaims:
 - name: oci-storage-data
   accessModes:
-  - ReadWriteOnce
+  - ReadWriteMany
   storageClassName: longhorn
   size: 30Gi
 application:

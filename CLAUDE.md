@@ -2,6 +2,13 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## ⛔ STRICT RULES - DO NOT VIOLATE
+
+- **NEVER run `helm upgrade`, `helm install`, or `task helm-install`** - User deploys manually
+- **NEVER run `task build`** - User builds manually
+- **NEVER run `git commit` or `git push`** unless explicitly asked
+- **Focus on fixing code only** - Do not deploy, build, or commit without explicit request
+
 ## Project Overview
 
 oci storage is a lightweight OCI-compatible registry for storing and managing Helm charts. It's built in Go using the Fiber web framework and provides both a web interface and REST API for chart management.

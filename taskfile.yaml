@@ -18,8 +18,8 @@ tasks:
         sh: git rev-parse --short HEAD
     cmds:
     - docker buildx build --platform linux/amd64 -t fizzbuzz2/oci-storage:{{.COMMIT_SHA}} --push .
-    - 'sed -i "" "s/tag: .*/tag: \"{{.COMMIT_SHA}}\"/" helm/values/home/values.yaml'
-    - echo "Pushed fizzbuzz2/oci-storage:{{.COMMIT_SHA}} and updated helm/values/home/values.yaml"
+    - 'sed -i "" "s/tag: .*/tag: \"{{.COMMIT_SHA}}\"/" helm/values.yaml'
+    - echo "Pushed fizzbuzz2/oci-storage:{{.COMMIT_SHA}} and updated helm/values.yaml"
 
   start:
     desc: Run the Docker container
@@ -193,7 +193,7 @@ tasks:
     - PORTAL_URL=${PORTAL_URL:-http://localhost:3030} PORTAL_AUTH=${PORTAL_AUTH:-admin:admin123} ./test-proxy.sh
 
   test-e2e:
-    desc: Run full E2E tests (chart push/pull/delete, proxy with configurable image)
+    desc: Run full E2E tests (OCI protocol, HTTP API, proxy, auth, backup)
     dir: tests
     cmds:
     - ./test-e2e.sh
@@ -202,7 +202,19 @@ tasks:
     desc: Run E2E tests for CI (configurable URL/image)
     dir: tests
     cmds:
-    - PORTAL_URL=${PORTAL_URL:-http://localhost:3030} PORTAL_AUTH=${PORTAL_AUTH:-admin:admin123} TEST_IMAGE=${TEST_IMAGE:-traefik} TEST_TAG=${TEST_TAG:-latest} ./test-e2e.sh
+    - PORTAL_URL=${PORTAL_URL:-http://localhost:3030} PORTAL_HOST=${PORTAL_HOST:-localhost:3030} PORTAL_AUTH=${PORTAL_AUTH:-admin:admin123} TEST_IMAGE=${TEST_IMAGE:-traefik} TEST_TAG=${TEST_TAG:-latest} ./test-e2e.sh
+
+  test-e2e-quick:
+    desc: Run E2E tests without upstream proxy tests (faster)
+    dir: tests
+    cmds:
+    - SKIP_UPSTREAM_TESTS=1 ./test-e2e.sh
+
+  test-e2e-keep:
+    desc: Run E2E tests and keep test data for UI verification
+    dir: tests
+    cmds:
+    - KEEP_TEST_DATA=1 ./test-e2e.sh
   # test-auth-workflow:
   #   desc: Test complete authentication workflow
   #   dir: src/testdata/charts
