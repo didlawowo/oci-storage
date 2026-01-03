@@ -455,10 +455,10 @@ function createImageCard(imageGroup) {
                       firstTag.layers ? firstTag.layers.length : "N/A"
                     }</p>
                 </div>
-                <p class="text-gray-500 text-xs truncate">
+                <p class="text-gray-500 text-xs truncate" title="${firstTag.digest || ''}">
                     <span class="font-semibold">Digest:</span> ${
                       firstTag.digest
-                        ? firstTag.digest.substring(0, 20) + "..."
+                        ? firstTag.digest.replace('sha256:', '').substring(0, 12)
                         : "N/A"
                     }
                 </p>
