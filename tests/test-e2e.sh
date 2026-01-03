@@ -351,13 +351,13 @@ if command -v helm &> /dev/null; then
     OCI_TEST_DIR=$(mktemp -d)
     cp "${CHART_DIR}/my-chart-0.1.0.tgz" "${OCI_TEST_DIR}/"
 
-    # Login to OCI registry
-    echo "$AUTH_PASS" | helm registry login "$PORTAL_HOST" --username "$AUTH_USER" --password-stdin 2>/dev/null
+    # Login to OCI registry (--insecure for HTTP without TLS)
+    echo "$AUTH_PASS" | helm registry login "$PORTAL_HOST" --username "$AUTH_USER" --password-stdin --insecure 2>/dev/null
     if [ $? -eq 0 ]; then
         log_pass "Helm registry login successful"
 
-        # Push chart via OCI protocol
-        PUSH_OUTPUT=$(helm push "${OCI_TEST_DIR}/my-chart-0.1.0.tgz" "oci://${PORTAL_HOST}/charts" 2>&1)
+        # Push chart via OCI protocol (--insecure for HTTP)
+        PUSH_OUTPUT=$(helm push "${OCI_TEST_DIR}/my-chart-0.1.0.tgz" "oci://${PORTAL_HOST}/charts" --insecure-skip-tls-verify 2>&1)
         if [ $? -eq 0 ]; then
             log_pass "Helm OCI push successful"
         else
@@ -366,8 +366,8 @@ if command -v helm &> /dev/null; then
 
         log_subsection "Helm OCI Pull (Real Protocol)"
 
-        # Pull chart via OCI protocol
-        PULL_OUTPUT=$(helm pull "oci://${PORTAL_HOST}/charts/my-chart" --version 0.1.0 -d "${OCI_TEST_DIR}/pulled" 2>&1)
+        # Pull chart via OCI protocol (--insecure for HTTP)
+        PULL_OUTPUT=$(helm pull "oci://${PORTAL_HOST}/charts/my-chart" --version 0.1.0 -d "${OCI_TEST_DIR}/pulled" --insecure-skip-tls-verify 2>&1)
         if [ $? -eq 0 ]; then
             log_pass "Helm OCI pull successful"
 
@@ -553,7 +553,7 @@ if [ "${SKIP_UPSTREAM_TESTS}" != "1" ]; then
 
     log_subsection "Cached Images Verification"
 
-    IMAGE_RESPONSE=$(curl -s -u "$AUTH" "${PORTAL_URL}/images" 2>/dev/null)
+    IMAGE_RESPONSE=$(curl -s -u "$AUTH" "${PORTAL_URL}/cache/images" 2>/dev/null)
 
     if echo "$IMAGE_RESPONSE" | grep -q "proxy/docker.io/${TEST_IMAGE}"; then
         log_pass "Proxied image appears in /images list"

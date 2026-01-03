@@ -314,19 +314,50 @@ func (s *ProxyService) parseWwwAuthenticate(header string) map[string]string {
 	return params
 }
 
-// GetCacheState returns the current cache state
+// GetCacheState returns the current cache state with total size from image metadata
 func (s *ProxyService) GetCacheState() *models.CacheState {
 	s.cacheMutex.RLock()
 	defer s.cacheMutex.RUnlock()
 
+	// Sum the sizes from cached image metadata (calculated from layer sizes)
+	var totalSize int64
+	for _, img := range s.cacheState.Images {
+		totalSize += img.Size
+	}
+
 	state := &models.CacheState{
-		TotalSize: s.cacheState.TotalSize,
+		TotalSize: totalSize,
 		MaxSize:   s.cacheState.MaxSize,
-		ItemCount: s.cacheState.ItemCount,
+		ItemCount: len(s.cacheState.Images),
 	}
 	state.CalculateUsagePercent()
 
 	return state
+}
+
+// calculateBlobDiskUsage walks the blobs directory and sums up actual file sizes
+func (s *ProxyService) calculateBlobDiskUsage() int64 {
+	blobsDir := s.pathManager.GetBasePath() + "/blobs"
+	var totalSize int64
+
+	entries, err := os.ReadDir(blobsDir)
+	if err != nil {
+		s.log.WithError(err).Debug("Failed to read blobs directory")
+		return 0
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		totalSize += info.Size()
+	}
+
+	return totalSize
 }
 
 // GetCachedImages returns all cached images metadata
@@ -468,6 +499,38 @@ func (s *ProxyService) deleteCachedImageFiles(name, tag string) error {
 	// A garbage collection process could be added later
 
 	return nil
+}
+
+// PurgeAllCache removes all cached images and blobs completely
+func (s *ProxyService) PurgeAllCache() error {
+	s.cacheMutex.Lock()
+	defer s.cacheMutex.Unlock()
+
+	s.log.Info("Purging all cache data")
+
+	// Delete all blobs
+	blobsDir := s.pathManager.GetBasePath() + "/blobs"
+	if err := os.RemoveAll(blobsDir); err != nil && !os.IsNotExist(err) {
+		s.log.WithError(err).Warn("Failed to delete blobs directory")
+	}
+	// Recreate empty blobs directory
+	os.MkdirAll(blobsDir, 0755)
+
+	// Delete all image metadata files
+	for _, img := range s.cacheState.Images {
+		metadataPath := s.pathManager.GetCachedImageMetadataPath(img.Name, img.Tag)
+		if err := os.Remove(metadataPath); err != nil && !os.IsNotExist(err) {
+			s.log.WithError(err).Debug("Failed to delete metadata file")
+		}
+	}
+
+	// Reset cache state
+	s.cacheState.Images = []models.CachedImageMetadata{}
+	s.cacheState.TotalSize = 0
+	s.cacheState.ItemCount = 0
+
+	s.log.Info("Cache purged successfully")
+	return s.saveCacheState()
 }
 
 // loadCacheState loads the cache state from disk

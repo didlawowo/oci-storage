@@ -180,6 +180,8 @@ func main() {
 	app.Get("/backup/status", backupHandler.GetBackupStatus)
 
 	// Helm Chart routes
+	// IMPORTANT: /chart/:name/versions MUST come before /chart/:name/:version to avoid "versions" being captured as a version
+	app.Get("/chart/:name/versions", helmHandler.GetChartVersions)
 	app.Get("/chart/:name/:version/details", helmHandler.DisplayChartDetails)
 	app.Delete("/chart/:name/:version", helmHandler.DeleteChart)
 	app.Post("/chart", helmHandler.UploadChart)
@@ -187,7 +189,6 @@ func main() {
 	app.Get("/chart/:name/:version", helmHandler.DownloadChart)
 	app.Get("/index.yaml", indexHandler.GetIndex)
 	app.Get("/charts", helmHandler.ListCharts)
-	app.Get("/chart/:name/versions", helmHandler.GetChartVersions)
 
 	// Docker Image routes
 	app.Get("/images", imageHandler.ListImages)
@@ -207,7 +208,7 @@ func main() {
 	// Cache/Proxy management routes
 	app.Get("/cache/status", cacheHandler.GetCacheStatus)
 	app.Get("/cache/images", cacheHandler.ListCachedImages)
-	app.Delete("/cache/image/:name/:tag", cacheHandler.DeleteCachedImage)
+	app.Delete("/cache/image/:name+/:tag", cacheHandler.DeleteCachedImage)
 	app.Post("/cache/purge", cacheHandler.PurgeCache)
 
 	// Routes OCI - support nested paths like charts/myapp or images/myapp

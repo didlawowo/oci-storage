@@ -78,4 +78,6 @@ type ProxyServiceInterface interface {
 	AddToCache(metadata models.CachedImageMetadata) error
 	// IsEnabled returns whether the proxy is enabled
 	IsEnabled() bool
+	// PurgeAllCache removes all cached images and blobs
+	PurgeAllCache() error
 }

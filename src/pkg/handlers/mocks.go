@@ -126,6 +126,11 @@ func (m *MockProxyService) IsEnabled() bool {
 	return args.Bool(0)
 }
 
+func (m *MockProxyService) PurgeAllCache() error {
+	args := m.Called()
+	return args.Error(0)
+}
+
 // MockImageService implements ImageServiceInterface for testing
 type MockImageService struct {
 	mock.Mock

@@ -95,7 +95,7 @@ func (h *CacheHandler) PurgeCache(c *fiber.Ctx) error {
 		return HTTPError(c, 400, "Proxy not enabled")
 	}
 
-	if err := h.proxyService.EvictLRU(0); err != nil {
+	if err := h.proxyService.PurgeAllCache(); err != nil {
 		h.log.WithFunc().WithError(err).Error("Failed to purge cache")
 		return HTTPError(c, 500, err.Error())
 	}

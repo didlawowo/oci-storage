@@ -149,9 +149,9 @@ func (h *OCIHandler) cacheManifest(name, reference string, manifestData []byte, 
 			return
 		}
 
-		for _, m := range index.Manifests {
-			totalSize += m.Size
-		}
+		// Calculate total size by fetching the first platform manifest and summing its layers
+		// This gives the actual image size, not just manifest sizes
+		totalSize = h.calculateManifestListSize(index, registryURL, upstreamName)
 
 		h.log.WithFields(logrus.Fields{
 			"name":      name,
@@ -262,4 +262,41 @@ func (h *OCIHandler) prefetchPlatformManifests(index models.OCIIndex, registryUR
 			}
 		}
 	}
+}
+
+// calculateManifestListSize calculates the total size of an image from a manifest list
+// by fetching the first platform manifest (preferably linux/amd64) and summing its layers
+func (h *OCIHandler) calculateManifestListSize(index models.OCIIndex, registryURL, upstreamName string) int64 {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Prefer linux/amd64, fall back to first available
+	var targetDigest string
+	for _, desc := range index.Manifests {
+		if desc.Platform != nil && desc.Platform.OS == "linux" && desc.Platform.Architecture == "amd64" {
+			targetDigest = desc.Digest
+			break
+		}
+	}
+	if targetDigest == "" && len(index.Manifests) > 0 {
+		targetDigest = index.Manifests[0].Digest
+	}
+	if targetDigest == "" {
+		return 0
+	}
+
+	// Fetch the platform manifest
+	manifestData, _, err := h.proxyService.GetManifest(ctx, registryURL, upstreamName, targetDigest)
+	if err != nil {
+		h.log.WithError(err).Debug("Failed to fetch platform manifest for size calculation")
+		return 0
+	}
+
+	var platformManifest models.OCIManifest
+	if err := json.Unmarshal(manifestData, &platformManifest); err != nil {
+		h.log.WithError(err).Debug("Failed to parse platform manifest for size calculation")
+		return 0
+	}
+
+	return platformManifest.GetTotalSize()
 }

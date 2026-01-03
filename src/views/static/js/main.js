@@ -239,9 +239,9 @@ function updateChart(cardElement, chartName, versions) {
 
 // 🐳 Docker Images Management
 /**
- * Current active tab
+ * Current active tab - Default to images (proxy cache)
  */
-let activeTab = "charts";
+let activeTab = "images";
 
 /**
  * Switch between charts and images tabs
@@ -360,14 +360,14 @@ async function purgeCache() {
 }
 
 /**
- * Fetch and display Docker images
+ * Fetch and display cached Docker images from proxy
  */
 async function loadDockerImages() {
   const container = document.getElementById("imagesContainer");
   const noImagesMessage = document.getElementById("noImagesMessage");
 
   try {
-    const response = await fetch("/images");
+    const response = await fetch("/cache/images");
     const data = await response.json();
 
     if (!data.images || data.images.length === 0) {
@@ -376,9 +376,14 @@ async function loadDockerImages() {
       return;
     }
 
+    // Sort by lastAccessed (most recent first)
+    const sortedImages = data.images.sort((a, b) =>
+      new Date(b.lastAccessed) - new Date(a.lastAccessed)
+    );
+
     noImagesMessage.style.display = "none";
-    container.innerHTML = data.images
-      .map((imageGroup) => createImageCard(imageGroup))
+    container.innerHTML = sortedImages
+      .map((image) => createCachedImageCard(image))
       .join("");
   } catch (error) {
     console.error("Error loading Docker images:", error);
@@ -392,20 +397,11 @@ async function loadDockerImages() {
 }
 
 /**
- * Create HTML card for a Docker image
- * @param {Object} imageGroup - The image group data
+ * Create HTML card for a cached Docker image (from proxy cache)
+ * @param {Object} image - CachedImageMetadata object
  * @returns {string} HTML string for the image card
  */
-function createImageCard(imageGroup) {
-  const name = imageGroup.name;
-  const tags = imageGroup.tags || [];
-  const firstTag = tags.length > 0 ? tags[0] : null;
-
-  if (!firstTag) {
-    return "";
-  }
-
-  // Format size
+function createCachedImageCard(image) {
   const formatSize = (bytes) => {
     if (!bytes) return "Unknown";
     const sizes = ["B", "KB", "MB", "GB"];
@@ -413,52 +409,39 @@ function createImageCard(imageGroup) {
     return (bytes / Math.pow(1024, i)).toFixed(2) + " " + sizes[i];
   };
 
-  const tagsHtml =
-    tags.length > 1
-      ? `<select class="mt-2 text-sm border rounded p-1" onchange="switchImageTag('${name}', this.value)">
-             ${tags
-               .map((t) => `<option value="${t.tag}">${t.tag}</option>`)
-               .join("")}
-           </select>`
-      : `<p class="mt-2 text-sm text-gray-600">Tag: ${firstTag.tag}</p>`;
+  const formatDate = (dateStr) => {
+    if (!dateStr) return "Unknown";
+    const date = new Date(dateStr);
+    return date.toLocaleDateString() + " " + date.toLocaleTimeString();
+  };
+
+  const name = image.name;
+  const tag = image.tag;
 
   return `
-        <div class="bg-white rounded-lg shadow-md p-6 flex flex-col h-[200px]" data-image-name="${name}">
-            <div class="flex justify-between items-start mb-4">
-                <div>
-                    <h2 class="text-lg font-bold text-purple-600">
-                        <a href="/image/${name}/${
-    firstTag.tag
-  }/details">${name}</a>
+        <div class="bg-white rounded-lg shadow-md p-6 flex flex-col h-[220px]" data-image-name="${name}" data-image-tag="${tag}">
+            <div class="flex justify-between items-start mb-3">
+                <div class="flex-1 min-w-0">
+                    <h2 class="text-lg font-bold text-purple-600 truncate" title="${name}">
+                        ${name}
                     </h2>
-                    ${tagsHtml}
+                    <p class="text-sm text-gray-600 mt-1">Tag: <span class="font-mono">${tag}</span></p>
                 </div>
-                <div class="flex gap-2">
-                    <a href="/image/${name}/${
-    firstTag.tag
-  }/details" class="tooltip-trigger" data-tooltip="View image details">
-                        <i class="material-icons icon-info text-blue-500 hover:text-blue-700">info</i>
-                    </a>
-                    <a href="#" onclick="deleteImage('${name}', '${
-    firstTag.tag
-  }')" class="tooltip-trigger" data-tooltip="Delete this tag">
+                <div class="flex gap-2 ml-2">
+                    <a href="#" onclick="deleteCachedImage('${name}', '${tag}'); return false;" class="tooltip-trigger" data-tooltip="Delete from cache">
                         <i class="material-icons icon-delete text-red-500 hover:text-red-700">delete</i>
                     </a>
                 </div>
             </div>
-            <div class="flex-1 overflow-hidden">
-                <div class="text-sm text-gray-600 mb-2">
-                    <p><span class="font-semibold">Size:</span> ${formatSize(
-                      firstTag.size
-                    )}</p>
-                    <p><span class="font-semibold">Layers:</span> ${
-                      firstTag.layers ? firstTag.layers.length : "N/A"
-                    }</p>
-                </div>
-                <p class="text-gray-500 text-xs truncate" title="${firstTag.digest || ''}">
+            <div class="flex-1 overflow-hidden text-sm text-gray-600">
+                <p class="mb-1"><span class="font-semibold">Size:</span> ${formatSize(image.size)}</p>
+                <p class="mb-1"><span class="font-semibold">Source:</span> ${image.sourceRegistry || "docker.io"}</p>
+                <p class="mb-1"><span class="font-semibold">Cached:</span> ${formatDate(image.cachedAt)}</p>
+                <p class="mb-1"><span class="font-semibold">Last Access:</span> ${formatDate(image.lastAccessed)}</p>
+                <p class="text-xs text-gray-400 truncate" title="${image.digest || ''}">
                     <span class="font-semibold">Digest:</span> ${
-                      firstTag.digest
-                        ? firstTag.digest.replace('sha256:', '').substring(0, 12)
+                      image.digest
+                        ? image.digest.replace('sha256:', '').substring(0, 12)
                         : "N/A"
                     }
                 </p>
@@ -514,6 +497,35 @@ async function deleteImage(name, tag) {
   }
 }
 
+/**
+ * Delete a cached Docker image from proxy cache
+ * @param {string} name - The image name
+ * @param {string} tag - The tag to delete
+ */
+async function deleteCachedImage(name, tag) {
+  if (!confirm(`Are you sure you want to remove ${name}:${tag} from cache?`)) {
+    return;
+  }
+
+  try {
+    const response = await fetch(`/cache/image/${encodeURIComponent(name)}/${encodeURIComponent(tag)}`, {
+      method: "DELETE",
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || "Failed to delete cached image");
+    }
+
+    showModal(`Cached image ${name}:${tag} removed successfully`, false);
+    loadDockerImages();
+    loadCacheStatus();
+  } catch (error) {
+    console.error("Error deleting cached image:", error);
+    showModal(`Error deleting cached image: ${error.message}`);
+  }
+}
+
 // 🚀 Initialisation
 document.addEventListener("DOMContentLoaded", function () {
   console.log("DOM loaded"); // Debug
@@ -523,6 +535,9 @@ document.addEventListener("DOMContentLoaded", function () {
   document.querySelectorAll(".portal-host").forEach((el) => {
     el.textContent = portalHost;
   });
+
+  // Default to images tab (proxy cache view)
+  showTab("images");
 
   // Vérifier le statut de la fonctionnalité de backup
   checkBackupStatus();
