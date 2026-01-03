@@ -7,16 +7,16 @@ podAnnotations: {}
 # No imagePullSecrets needed - proxy allows anonymous read
 imagePullSecrets: []
 
-# Use docker.io image - Kyverno will rewrite to oci-storage proxy
+# Use nginx image - Kyverno will rewrite to oci-storage proxy
 image:
-  repository: busybox
-  tag: "1.36"
+  repository: nginx
+  tag: "alpine"
   pullPolicy: Always
 
 service:
   type: ClusterIP
   port: 80
-  targetPort: 8080
+  targetPort: 80
 
 resources:
   limits:
@@ -26,6 +26,7 @@ resources:
     cpu: 50m
     memory: 32Mi
 
-nodeSelector: {}
+nodeSelector:
+  kubernetes.io/hostname: zima
 tolerations: []
 affinity: {}
