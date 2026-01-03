@@ -416,7 +416,12 @@ function createCachedImageCard(image) {
   };
 
   const name = image.name;
-  const tag = image.tag;
+  // Use tag from originalRef if available (more reliable than tag field)
+  // originalRef format: "namespace/image:tag" or "image:tag"
+  let tag = image.tag;
+  if (image.originalRef && image.originalRef.includes(':')) {
+    tag = image.originalRef.split(':').pop();
+  }
 
   return `
         <div class="bg-white rounded-lg shadow-md p-6 flex flex-col h-[220px]" data-image-name="${name}" data-image-tag="${tag}">
