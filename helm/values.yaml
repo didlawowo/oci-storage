@@ -4,7 +4,7 @@ podAnnotations:
   oci-portal-skip: "true"
 image:
   repository: fizzbuzz2/oci-storage
-  tag: "14824d1"
+  tag: "efc2371"
   pullPolicy: "Always"
   pullSecrets: []
 strategy:
@@ -27,12 +27,12 @@ nodeSelector: {}
 tolerations: []
 affinity: {}
 initContainers:
-- name: init-data-dir
-  image: busybox
-  command: [ "sh", "-c", "mkdir -p /app/data/temp /app/data/blobs /app/data/manifests /app/data/charts &&  chown -R 1000:1000 /app/data" ]
-  volumeMounts:
-  - name: data-volume
-    mountPath: /app/data
+  - name: init-data-dir
+    image: busybox
+    command: ["sh", "-c", "mkdir -p /app/data/temp /app/data/blobs /app/data/manifests /app/data/charts &&  chown -R 1000:1000 /app/data"]
+    volumeMounts:
+      - name: data-volume
+        mountPath: /app/data
 resources:
   limits:
     cpu: 300m
@@ -42,16 +42,16 @@ resources:
     memory: 128Mi
 # volumes 
 persistentVolumesClaims:
-- name: oci-storage-data
-  accessModes:
-  - ReadWriteOnce
-  storageClassName: longhorn
-  size: 30Gi
+  - name: oci-storage-data
+    accessModes:
+      - ReadWriteOnce
+    storageClassName: longhorn
+    size: 30Gi
 application:
   ports:
-  - name: http
-    containerPort: 3030
-    protocol: TCP
+    - name: http
+      containerPort: 3030
+      protocol: TCP
   containerName: oci-storage
   command: []
   args: []
@@ -66,32 +66,32 @@ secrets:
   #   - name: backup
   #     path: values/home/secrets/secrets.env
   files:
-  - name: auth
-    path: values/home/secrets/auth.yaml
+    - name: auth
+      path: values/home/secrets/auth.yaml
 volumeMounts:
-- name: config-volume
-  mountPath: /app/config # Répertoire entier
-  readOnly: true
-- name: data-volume
-  mountPath: /app/data
+  - name: config-volume
+    mountPath: /app/config # Répertoire entier
+    readOnly: true
+  - name: data-volume
+    mountPath: /app/data
 volumes:
-- name: config-volume
-  projected:
-    # 🎯 Combine plusieurs sources
-    sources:
-    - configMap:
-        name: oci-storage-config
-        items:
-        - key: config.yaml
-          path: config.yaml # Sera /app/config/config.yaml
-    - secret:
-        name: oci-storage-auth
-        items:
-        - key: auth.yaml
-          path: auth.yaml
-- name: data-volume
-  persistentVolumeClaim:
-    claimName: oci-storage-data
+  - name: config-volume
+    projected:
+      # 🎯 Combine plusieurs sources
+      sources:
+        - configMap:
+            name: oci-storage-config
+            items:
+              - key: config.yaml
+                path: config.yaml # Sera /app/config/config.yaml
+        - secret:
+            name: oci-storage-auth
+            items:
+              - key: auth.yaml
+                path: auth.yaml
+  - name: data-volume
+    persistentVolumeClaim:
+      claimName: oci-storage-data
 # probes
 livenessProbe:
   httpGet:
@@ -120,76 +120,76 @@ ingress:
     secretName: ""
   ingressClassName: traefik
 env:
-- name: ENV
-  value: production
-# Configuration via variables d'environnement
-- name: SERVER_PORT
-  value: "3030"
-- name: LOG_LEVEL
-  value: "info"
-# Auth configuration - Option 1: Variable unique avec liste
-# Temporaire pour test - à remplacer par secret en production
-- name: HELM_USERS
-  # Auth configuration - Choisir UNE des 3 options :
+  - name: ENV
+    value: production
+  # Configuration via variables d'environnement
+  - name: SERVER_PORT
+    value: "3030"
+  - name: LOG_LEVEL
+    value: "info"
+  # Auth configuration - Option 1: Variable unique avec liste
+  # Temporaire pour test - à remplacer par secret en production
+  - name: HELM_USERS
+    # Auth configuration - Choisir UNE des 3 options :
 
-  value: "admin:secret123,dev:devpass,readonly:readpass"
-# Backup configuration (si activé)
-# - name: BACKUP_ENABLED
-#   value: "true"
-# - name: BACKUP_PROVIDER
-#   value: "aws"  # ou "gcp" ou "azure"
+    value: "admin:secret123,dev:devpass,readonly:readpass"
+  # GCP config  
+  # - name: GCP_BUCKET
+  #   value: "oci-storage-backup"
+  # - name: GCP_PROJECT_ID
+  #   value: "your-project-id"
+  # - name: GCP_CREDENTIALS_FILE
+  #   value: "/path/to/credentials.json"
 
-# AWS config
-# - name: AWS_BUCKET
-#   value: "oci-storage-backup"
-# - name: AWS_REGION
-#   value: "eu-west-1"
-# - name: AWS_ACCESS_KEY_ID
-#   value: "your-access-key"
-# - name: AWS_SECRET_ACCESS_KEY
-#   value: "your-secret-key"
+  # Azure config
+  # - name: AZURE_STORAGE_ACCOUNT
+  #   value: "helmportalbackup"
+  # - name: AZURE_CONTAINER
+  #   value: "backup"
+  # - name: AZURE_STORAGE_ACCOUNT_KEY
+  #   value: "your-storage-key"
 
-# GCP config  
-# - name: GCP_BUCKET
-#   value: "oci-storage-backup"
-# - name: GCP_PROJECT_ID
-#   value: "your-project-id"
-# - name: GCP_CREDENTIALS_FILE
-#   value: "/path/to/credentials.json"
+  # Registry credentials for proxy (loaded from secrets)
+  - name: GHCR_USERNAME
+    # Backup configuration (si activé)
+    # - name: BACKUP_ENABLED
+    #   value: "true"
+    # - name: BACKUP_PROVIDER
+    #   value: "aws"  # ou "gcp" ou "azure"
 
-# Azure config
-# - name: AZURE_STORAGE_ACCOUNT
-#   value: "helmportalbackup"
-# - name: AZURE_CONTAINER
-#   value: "backup"
-# - name: AZURE_STORAGE_ACCOUNT_KEY
-#   value: "your-storage-key"
+    # AWS config
+    # - name: AWS_BUCKET
+    #   value: "oci-storage-backup"
+    # - name: AWS_REGION
+    #   value: "eu-west-1"
+    # - name: AWS_ACCESS_KEY_ID
+    #   value: "your-access-key"
+    # - name: AWS_SECRET_ACCESS_KEY
+    #   value: "your-secret-key"
 
-# Registry credentials for proxy (loaded from secrets)
-- name: GHCR_USERNAME
-  valueFrom:
-    secretKeyRef:
-      name: ghcr-credentials
-      key: username
-      optional: true
-- name: GHCR_PASSWORD
-  valueFrom:
-    secretKeyRef:
-      name: ghcr-credentials
-      key: password
-      optional: true
-- name: DOCKERHUB_USERNAME
-  valueFrom:
-    secretKeyRef:
-      name: dockerhub-credentials
-      key: username
-      optional: true
-- name: DOCKERHUB_PASSWORD
-  valueFrom:
-    secretKeyRef:
-      name: dockerhub-credentials
-      key: password
-      optional: true
+    valueFrom:
+      secretKeyRef:
+        name: ghcr-credentials
+        key: username
+        optional: true
+  - name: GHCR_PASSWORD
+    valueFrom:
+      secretKeyRef:
+        name: ghcr-credentials
+        key: password
+        optional: true
+  - name: DOCKERHUB_USERNAME
+    valueFrom:
+      secretKeyRef:
+        name: dockerhub-credentials
+        key: username
+        optional: true
+  - name: DOCKERHUB_PASSWORD
+    valueFrom:
+      secretKeyRef:
+        name: dockerhub-credentials
+        key: password
+        optional: true
 envFrom: []
 # Secret pour les credentials d'authentification (activer après création du secret)
 # - secretRef:
@@ -207,7 +207,6 @@ kyverno:
   # The hostname of the OCI portal (without protocol)
   # e.g., "oci-storage.example.com" or "oci-storage:3030"
   portalHost: "oci-storage.dc-tech.work"
-
 config:
   server:
     port: 3030
@@ -231,19 +230,19 @@ config:
     cache:
       maxSizeGB: 10
     registries:
-    - name: "docker.io"
-      url: "https://registry-1.docker.io"
-      default: true
-    - name: "ghcr.io"
-      url: "https://ghcr.io"
-      # Credentials loaded from environment variables GHCR_USERNAME and GHCR_PASSWORD
-    - name: "gcr.io"
-      url: "https://gcr.io"
-    - name: "eu.gcr.io"
-      url: "https://eu.gcr.io"
-    - name: "us.gcr.io"
-      url: "https://us.gcr.io"
-    - name: "asia.gcr.io"
-      url: "https://asia.gcr.io"
-    - name: "quay.io"
-      url: "https://quay.io"
+      - name: "docker.io"
+        url: "https://registry-1.docker.io"
+        default: true
+      - name: "ghcr.io"
+        url: "https://ghcr.io"
+        # Credentials loaded from environment variables GHCR_USERNAME and GHCR_PASSWORD
+      - name: "gcr.io"
+        url: "https://gcr.io"
+      - name: "eu.gcr.io"
+        url: "https://eu.gcr.io"
+      - name: "us.gcr.io"
+        url: "https://us.gcr.io"
+      - name: "asia.gcr.io"
+        url: "https://asia.gcr.io"
+      - name: "quay.io"
+        url: "https://quay.io"
