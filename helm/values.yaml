@@ -228,7 +228,7 @@ config:
   proxy:
     enabled: true
     cache:
-      maxSizeGB: 10
+      maxSizeGB: 35
     registries:
       - name: "docker.io"
         url: "https://registry-1.docker.io"

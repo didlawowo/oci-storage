@@ -15,9 +15,13 @@ spec:
   template:
     metadata:
       labels: {{- include "application.labels" . | nindent 8 }}
-      {{- with .Values.podAnnotations }}
-      annotations: {{- toYaml . | nindent 8 }}
-      {{- end }}
+      annotations:
+        # Trigger pod restart when configmap or secrets change
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secrets.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
     spec:
       serviceAccountName: {{  .Values.serviceAccount.name }}
       initContainers: {{- toYaml .Values.initContainers | nindent 8 }}
