@@ -14,8 +14,10 @@ Use the Taskfile for common development tasks:
 - `task build` - Build and push Docker image  
 - `task start` - Start Docker container via docker-compose
 - `task stop` - Stop Docker container
-- `task helm-install` - Deploy to Kubernetes cluster
+- `task helm-install` - Deploy to Kubernetes cluster (local testing only)
 - `task helm-template` - Generate Helm templates for debugging
+
+**IMPORTANT**: Do NOT deploy oci-storage with `task helm-install` in production. ArgoCD manages the deployment - just commit and push changes, ArgoCD will sync automatically.
 
 For testing Helm functionality:
 - `task test-upload-chart` - Test chart upload via HTTP

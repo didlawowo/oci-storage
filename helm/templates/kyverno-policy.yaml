@@ -45,11 +45,11 @@ spec:
                 - key: "{{ `{{element.image}}` }}"
                   operator: NotEquals
                   value: "{{ .Values.kyverno.portalHost }}/*"
-                - key: "{{ `{{ regex_match('^` }}{{ .Values.kyverno.portalHost | replace "." "\\\\." }}{{ `/.*', element.image) }}` }}"
+                - key: "{{ `{{ regex_match('` }}{{ .Values.kyverno.portalHost | replace "." "\\\\." }}{{ `/.*', '{{element.image}}') }}` }}"
                   operator: NotEquals
                   value: "true"
                 # Only match images with a registry domain (contains a dot in first segment)
-                - key: "{{ `{{ regex_match('^[a-zA-Z0-9][a-zA-Z0-9.-]*\\.[a-zA-Z0-9]+/', element.image) }}` }}"
+                - key: "{{ `{{ regex_match('[a-zA-Z0-9][a-zA-Z0-9.-]*\\.[a-zA-Z0-9]+/', '{{element.image}}') }}` }}"
                   operator: Equals
                   value: "true"
             patchStrategicMerge:
@@ -59,7 +59,7 @@ spec:
                     # Rewrite images to use proxy path:
                     # - eu.gcr.io/datadoghq/agent:7.71.2 -> portalHost/proxy/eu.gcr.io/datadoghq/agent:7.71.2
                     # - docker.io/nginx:latest -> portalHost/proxy/docker.io/nginx:latest
-                    image: "{{ `{{regex_replace_all('^([a-zA-Z0-9][a-zA-Z0-9.-]*\\.[a-zA-Z0-9]+)/(.*)$', element.image, '` }}{{ .Values.kyverno.portalHost }}{{ `/proxy/$1/$2')}}` }}"
+                    image: "{{ `{{regex_replace_all('^([a-zA-Z0-9][a-zA-Z0-9.-]*\\.[a-zA-Z0-9]+)/(.*)$', '{{element.image}}', '` }}{{ .Values.kyverno.portalHost }}{{ `/proxy/$1/$2')}}` }}"
     # Rule 2: Rewrite DockerHub images without explicit domain (e.g., nginx:latest, fizzbuzz2/app:v1)
     - name: rewrite-dockerhub-implicit
       match:
@@ -89,16 +89,16 @@ spec:
                 - key: "{{ `{{element.image}}` }}"
                   operator: NotEquals
                   value: "{{ .Values.kyverno.portalHost }}/*"
-                - key: "{{ `{{ regex_match('^` }}{{ .Values.kyverno.portalHost | replace "." "\\\\." }}{{ `/.*', element.image) }}` }}"
+                - key: "{{ `{{ regex_match('` }}{{ .Values.kyverno.portalHost | replace "." "\\\\." }}{{ `/.*', '{{element.image}}') }}` }}"
                   operator: NotEquals
                   value: "true"
                 # Only match images WITHOUT a registry domain (no dot in first segment before slash)
                 # This catches: nginx:latest, fizzbuzz2/app:v1, library/postgres:16
-                - key: "{{ `{{ regex_match('^[a-zA-Z0-9][a-zA-Z0-9.-]*\\.[a-zA-Z0-9]+/', element.image) }}` }}"
+                - key: "{{ `{{ regex_match('[a-zA-Z0-9][a-zA-Z0-9.-]*\\.[a-zA-Z0-9]+/', '{{element.image}}') }}` }}"
                   operator: NotEquals
                   value: "true"
                 # Must have at least one character (not empty)
-                - key: "{{ `{{ regex_match('^.+$', element.image) }}` }}"
+                - key: "{{ `{{ regex_match('.+', '{{element.image}}') }}` }}"
                   operator: Equals
                   value: "true"
             patchStrategicMerge:
