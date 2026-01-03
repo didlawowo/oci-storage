@@ -422,9 +422,11 @@ function createCachedImageCard(image) {
         <div class="bg-white rounded-lg shadow-md p-6 flex flex-col h-[220px]" data-image-name="${name}" data-image-tag="${tag}">
             <div class="flex justify-between items-start mb-3">
                 <div class="flex-1 min-w-0">
-                    <h2 class="text-lg font-bold text-purple-600 truncate" title="${name}">
-                        ${name}
-                    </h2>
+                    <a href="/image/${name}/${encodeURIComponent(tag)}/details" class="hover:underline">
+                        <h2 class="text-lg font-bold text-purple-600 truncate" title="${name}">
+                            ${name}
+                        </h2>
+                    </a>
                     <p class="text-sm text-gray-600 mt-1">Tag: <span class="font-mono">${tag}</span></p>
                 </div>
                 <div class="flex gap-2 ml-2">

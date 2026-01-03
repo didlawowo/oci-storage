@@ -4,7 +4,7 @@ podAnnotations:
   oci-portal-skip: "true"
 image:
   repository: fizzbuzz2/oci-storage
-  tag: "0e4860b"
+  tag: "16bcc9b"
   pullPolicy: "Always"
   pullSecrets: []
 strategy:
@@ -233,6 +233,8 @@ config:
       - name: "docker.io"
         url: "https://registry-1.docker.io"
         default: true
+      - name: "registry-1.docker.io"
+        url: "https://registry-1.docker.io"
       - name: "ghcr.io"
         url: "https://ghcr.io"
         # Credentials loaded from environment variables GHCR_USERNAME and GHCR_PASSWORD

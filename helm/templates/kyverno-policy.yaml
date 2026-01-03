@@ -37,11 +37,12 @@ spec:
                 - kube-system
                 - kube-public
                 - kube-node-lease
-                - cilium
-                - cilium-secrets
-                - kyverno
+                - cnpg-system
+                # - cilium
+                # - cilium-secrets
+                # - kyverno
                 - security
-                - longhorn-system
+                # - longhorn-system
       mutate:
         foreach:
           - list: "request.object.spec.containers"

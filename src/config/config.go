@@ -184,10 +184,11 @@ func loadConfigFromEnv(config *Config) {
 func loadRegistryCredentialsFromEnv(config *Config) {
 	// Map of registry names to env var prefixes
 	registryEnvPrefixes := map[string]string{
-		"ghcr.io":    "GHCR",
-		"docker.io":  "DOCKERHUB",
-		"gcr.io":     "GCR",
-		"quay.io":    "QUAY",
+		"ghcr.io":              "GHCR",
+		"docker.io":            "DOCKERHUB",
+		"registry-1.docker.io": "DOCKERHUB",
+		"gcr.io":               "GCR",
+		"quay.io":              "QUAY",
 	}
 
 	for i := range config.Proxy.Registries {
