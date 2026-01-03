@@ -176,29 +176,38 @@ test_endpoint "OCI v2 API (with auth)" "GET" "/v2/" "200"
 # ============================================
 log_section "Authentication Tests"
 
-log_subsection "Negative Authentication Tests"
+log_subsection "Anonymous Read Access (allowed by design)"
+# GET/HEAD without auth is allowed for proxy/cache functionality
+test_endpoint "Anonymous GET /v2/ → 200 (read allowed)" "GET" "/v2/" "200" "no"
 
-# Test missing auth header
-test_endpoint "Missing auth header → 401" "GET" "/v2/" "401" "no"
-
-# Test invalid credentials
-INVALID_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" -u "wrong:credentials" "${PORTAL_URL}/v2/" 2>/dev/null)
-if [ "$INVALID_RESPONSE" = "401" ]; then
-    log_pass "Invalid credentials → 401 (HTTP $INVALID_RESPONSE)"
+log_subsection "Write Operations Require Auth"
+# POST without auth should fail
+WRITE_NO_AUTH=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${PORTAL_URL}/v2/test/blobs/uploads/" 2>/dev/null)
+if [ "$WRITE_NO_AUTH" = "401" ]; then
+    log_pass "POST without auth → 401 (HTTP $WRITE_NO_AUTH)"
 else
-    log_fail "Invalid credentials should return 401, got $INVALID_RESPONSE"
+    log_fail "POST without auth should return 401, got $WRITE_NO_AUTH"
 fi
 
-# Test malformed auth header
-MALFORMED_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Basic notbase64!" "${PORTAL_URL}/v2/" 2>/dev/null)
-if [ "$MALFORMED_RESPONSE" = "401" ]; then
-    log_pass "Malformed auth header → 401 (HTTP $MALFORMED_RESPONSE)"
+# Test invalid credentials on write
+INVALID_WRITE=$(curl -s -o /dev/null -w "%{http_code}" -X POST -u "wrong:credentials" "${PORTAL_URL}/v2/test/blobs/uploads/" 2>/dev/null)
+if [ "$INVALID_WRITE" = "401" ]; then
+    log_pass "POST with invalid credentials → 401 (HTTP $INVALID_WRITE)"
 else
-    log_fail "Malformed auth header should return 401, got $MALFORMED_RESPONSE"
+    log_fail "POST with invalid credentials should return 401, got $INVALID_WRITE"
 fi
 
-log_subsection "Positive Authentication Tests"
+# Test malformed auth header on write
+MALFORMED_WRITE=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "Authorization: Basic notbase64!" "${PORTAL_URL}/v2/test/blobs/uploads/" 2>/dev/null)
+if [ "$MALFORMED_WRITE" = "401" ]; then
+    log_pass "POST with malformed auth → 401 (HTTP $MALFORMED_WRITE)"
+else
+    log_fail "POST with malformed auth should return 401, got $MALFORMED_WRITE"
+fi
+
+log_subsection "Valid Authentication"
 test_endpoint "Valid credentials → 200" "GET" "/v2/" "200"
+test_endpoint "POST with valid auth → 202" "POST" "/v2/test-auth/blobs/uploads/" "202"
 
 # ============================================
 # CLEANUP PREVIOUS TEST DATA

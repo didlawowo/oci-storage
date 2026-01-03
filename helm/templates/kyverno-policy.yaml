@@ -41,6 +41,7 @@ spec:
                 - cilium-secrets
                 - kyverno
                 - security
+                - longhorn-system
       mutate:
         foreach:
           - list: "request.object.spec.containers"
