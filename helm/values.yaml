@@ -250,3 +250,5 @@ config:
         url: "https://quay.io"
       - name: "registry.k8s.io"
         url: "https://registry.k8s.io"
+      - name: "nvcr.io"
+        url: "https://nvcr.io"
