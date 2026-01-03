@@ -12,9 +12,14 @@ tasks:
     - air
 
   build:
-    desc: Build Docker image
+    desc: Build Docker image with current commit hash as tag
+    vars:
+      COMMIT_SHA:
+        sh: git rev-parse --short HEAD
     cmds:
-    - docker compose build --push
+    - docker buildx build --platform linux/amd64 -t fizzbuzz2/oci-storage:{{.COMMIT_SHA}} --push .
+    - 'sed -i "" "s/tag: .*/tag: \"{{.COMMIT_SHA}}\"/" helm/values/home/values.yaml'
+    - echo "Pushed fizzbuzz2/oci-storage:{{.COMMIT_SHA}} and updated helm/values/home/values.yaml"
 
   start:
     desc: Run the Docker container

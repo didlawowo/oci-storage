@@ -98,8 +98,9 @@ func (h *ImageHandler) DisplayImageDetails(c *fiber.Ctx) error {
 		metadata.Config = config
 	}
 
-	// Check Accept header for JSON vs HTML
-	if c.Accepts("application/json") != "" {
+	// Return JSON only if explicitly requested (not browser's */*)
+	acceptHeader := c.Get("Accept")
+	if acceptHeader == "application/json" {
 		return c.JSON(metadata)
 	}
 
@@ -235,7 +236,9 @@ func (h *ImageHandler) displayImageDetailsInternal(c *fiber.Ctx, name, tag strin
 		metadata.Config = config
 	}
 
-	if c.Accepts("application/json") != "" {
+	// Return JSON only if explicitly requested (not browser's */*)
+	acceptHeader := c.Get("Accept")
+	if acceptHeader == "application/json" {
 		return c.JSON(metadata)
 	}
 
