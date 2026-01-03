@@ -14,21 +14,19 @@ metadata:
     pod-policies.kyverno.io/autogen-controllers: none
     policies.kyverno.io/description: >-
       This policy rewrites container image references to use the OCI Portal
-      as a pull-through cache proxy. Active by default for all pods.
+      as a pull-through cache proxy. It normalizes images (nginx:latest becomes
+      docker.io/library/nginx:latest) and prepends the portal proxy path.
       Add annotation 'oci-portal-skip: "true"' to exclude a pod from rewriting.
 spec:
   background: false
   rules:
-    # Rewrite all container images to use the proxy
+    # Rewrite container images to use the proxy
     - name: rewrite-container-images
       match:
         any:
           - resources:
               kinds:
                 - Pod
-              operations:
-                - CREATE
-                - UPDATE
       exclude:
         any:
           - resources:
@@ -50,10 +48,9 @@ spec:
               spec:
                 containers:
                   - name: "{{ `{{ element.name }}` }}"
-                    # Kyverno normalizes images: nginx:latest becomes docker.io/nginx:latest
-                    # This regex replaces the first path segment (registry) with portal/proxy/registry
-                    # docker.io/nginx:latest -> portalHost/proxy/docker.io/nginx:latest
-                    image: "{{ `{{ regex_replace_all_literal('^[^/]+', '{{element.image}}', '` }}{{ .Values.kyverno.portalHost }}{{ `/proxy/{{images.containers.\"{{element.name}}\".registry}}') }}` }}"
+                    # image_normalize converts nginx:latest to docker.io/library/nginx:latest
+                    # Then we prepend the portal proxy path
+                    image: "{{ .Values.kyverno.portalHost }}/proxy/{{ `{{ image_normalize('{{element.image}}') }}` }}"
     # Rewrite initContainer images
     - name: rewrite-initcontainer-images
       match:
@@ -61,9 +58,6 @@ spec:
           - resources:
               kinds:
                 - Pod
-              operations:
-                - CREATE
-                - UPDATE
       exclude:
         any:
           - resources:
@@ -80,7 +74,7 @@ spec:
                 - security
       preconditions:
         all:
-          - key: "{{ `{{ request.object.spec.initContainers[] || '' | length(@) }}` }}"
+          - key: "{{ `{{ request.object.spec.initContainers[] || ` }}{{ "`[]`" }}{{ ` | length(@) }}` }}"
             operator: GreaterThanOrEquals
             value: 1
       mutate:
@@ -90,5 +84,5 @@ spec:
               spec:
                 initContainers:
                   - name: "{{ `{{ element.name }}` }}"
-                    image: "{{ `{{ regex_replace_all_literal('^[^/]+', '{{element.image}}', '` }}{{ .Values.kyverno.portalHost }}{{ `/proxy/{{images.initContainers.\"{{element.name}}\".registry}}') }}` }}"
+                    image: "{{ .Values.kyverno.portalHost }}/proxy/{{ `{{ image_normalize('{{element.image}}') }}` }}"
 {{- end }}

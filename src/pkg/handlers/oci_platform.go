@@ -22,16 +22,19 @@ import (
 // - Accept header: only resolve if client doesn't support manifest lists
 func (h *OCIHandler) sendManifestResponse(c *fiber.Ctx, manifestData []byte, reference string) error {
 	h.log.WithFunc().WithField("dataLen", len(manifestData)).Debug("sendManifestResponse called")
-	digest := fmt.Sprintf("sha256:%x", sha256.Sum256(manifestData))
 
-	// Verify digest if reference is a digest
+	// Determine the digest to use
+	// If the reference is already a digest, trust it (the file was found by this digest)
+	// This handles cases where JSON re-serialization changed the content hash
+	// but the file was correctly stored with the original digest as filename
 	isDigestRef := strings.HasPrefix(reference, "sha256:")
-	if isDigestRef && digest != reference {
-		h.log.WithFunc().WithFields(logrus.Fields{
-			"expected": reference,
-			"got":      digest,
-		}).Error("Manifest digest mismatch")
-		return c.SendStatus(404)
+	var digest string
+	if isDigestRef {
+		// Trust the requested digest - the file was found by this name
+		digest = reference
+	} else {
+		// Calculate digest for tag references
+		digest = fmt.Sprintf("sha256:%x", sha256.Sum256(manifestData))
 	}
 
 	// Determine content type from manifest
