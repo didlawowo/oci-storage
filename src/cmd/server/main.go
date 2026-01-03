@@ -192,8 +192,9 @@ func main() {
 	// Docker Image routes
 	app.Get("/images", imageHandler.ListImages)
 	// Deep nested paths for proxy images (e.g., /image/proxy/docker.io/nginx/alpine/details)
-	app.Get("/image/*", imageHandler.HandleImageWildcard)
-	app.Delete("/image/*", imageHandler.HandleImageDeleteWildcard)
+	// Use :path+ to match one or more path segments
+	app.Get("/image/:path+", imageHandler.HandleImageWildcard)
+	app.Delete("/image/:path+", imageHandler.HandleImageDeleteWildcard)
 
 	// Routes Backup
 	app.Post("/backup", backupHandler.HandleBackup)

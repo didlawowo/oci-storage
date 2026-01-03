@@ -137,7 +137,11 @@ func (h *ImageHandler) DeleteImage(c *fiber.Ctx) error {
 // HandleImageWildcard handles GET requests for images with deep nested paths
 // Supports: /image/name/tag/details or /image/proxy/registry/image/tag/details
 func (h *ImageHandler) HandleImageWildcard(c *fiber.Ctx) error {
-	path := c.Params("*")
+	// Try both param names for compatibility with different route syntaxes
+	path := c.Params("path")
+	if path == "" {
+		path = c.Params("*")
+	}
 	// Path format: name/tag/details or proxy/registry/image/tag/details
 
 	// Check if path ends with /details
@@ -164,7 +168,11 @@ func (h *ImageHandler) HandleImageWildcard(c *fiber.Ctx) error {
 
 // HandleImageDeleteWildcard handles DELETE requests for images with deep nested paths
 func (h *ImageHandler) HandleImageDeleteWildcard(c *fiber.Ctx) error {
-	path := c.Params("*")
+	// Try both param names for compatibility with different route syntaxes
+	path := c.Params("path")
+	if path == "" {
+		path = c.Params("*")
+	}
 	// Path format: name/tag
 
 	// Split to get name and tag - tag is the last segment
