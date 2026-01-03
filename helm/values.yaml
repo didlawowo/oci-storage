@@ -252,3 +252,5 @@ config:
         url: "https://registry.k8s.io"
       - name: "nvcr.io"
         url: "https://nvcr.io"
+      - name: "code.forgejo.org"
+        url: "https://code.forgejo.org"
