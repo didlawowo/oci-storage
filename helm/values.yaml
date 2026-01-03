@@ -248,3 +248,5 @@ config:
       url: "https://asia.gcr.io"
     - name: "quay.io"
       url: "https://quay.io"
+    - name: "registry.k8s.io"
+      url: "https://registry.k8s.io"
