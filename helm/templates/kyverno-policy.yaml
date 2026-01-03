@@ -44,6 +44,12 @@ spec:
       mutate:
         foreach:
           - list: "request.object.spec.containers"
+            preconditions:
+              all:
+                # Skip images that already point to the portal (avoid double-rewrite)
+                - key: "{{ `{{ starts_with(element.image, '` }}{{ .Values.kyverno.portalHost }}{{ `') }}` }}"
+                  operator: NotEquals
+                  value: true
             patchStrategicMerge:
               spec:
                 containers:
@@ -80,6 +86,12 @@ spec:
       mutate:
         foreach:
           - list: "request.object.spec.initContainers"
+            preconditions:
+              all:
+                # Skip images that already point to the portal (avoid double-rewrite)
+                - key: "{{ `{{ starts_with(element.image, '` }}{{ .Values.kyverno.portalHost }}{{ `') }}` }}"
+                  operator: NotEquals
+                  value: true
             patchStrategicMerge:
               spec:
                 initContainers:
