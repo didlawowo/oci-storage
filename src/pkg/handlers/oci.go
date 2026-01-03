@@ -234,19 +234,35 @@ func (h *OCIHandler) findManifest(name, reference string) ([]byte, string, error
 
 // findManifestByDigest searches for a manifest by its digest
 func (h *OCIHandler) findManifestByDigest(name, digest string) ([]byte, string, error) {
+	// First try blob path (most reliable - stored with correct digest)
+	blobPath := h.pathManager.GetBlobPath(digest)
+	if data, err := os.ReadFile(blobPath); err == nil {
+		return data, blobPath, nil
+	}
+
+	// Try finding by filename pattern (sha256_xxx.json) - faster than recalculating hashes
+	// This handles cases where manifest was stored with digest in filename
+	digestFileName := strings.Replace(digest, ":", "_", 1) + ".json"
+
 	helmManifestsDir := filepath.Join(h.pathManager.GetBasePath(), "manifests", name)
+	helmManifestPath := filepath.Join(helmManifestsDir, digestFileName)
+	if data, err := os.ReadFile(helmManifestPath); err == nil {
+		return data, helmManifestPath, nil
+	}
+
+	imageManifestsDir := filepath.Join(h.pathManager.GetBasePath(), "images", name, "manifests")
+	imageManifestPath := filepath.Join(imageManifestsDir, digestFileName)
+	if data, err := os.ReadFile(imageManifestPath); err == nil {
+		return data, imageManifestPath, nil
+	}
+
+	// Fallback: search by recalculating hashes (slow but thorough)
 	if data, path, err := h.searchDirForDigest(helmManifestsDir, digest); err == nil {
 		return data, path, nil
 	}
 
-	imageManifestsDir := filepath.Join(h.pathManager.GetBasePath(), "images", name, "manifests")
 	if data, path, err := h.searchDirForDigest(imageManifestsDir, digest); err == nil {
 		return data, path, nil
-	}
-
-	blobPath := h.pathManager.GetBlobPath(digest)
-	if data, err := os.ReadFile(blobPath); err == nil {
-		return data, blobPath, nil
 	}
 
 	return nil, "", fmt.Errorf("manifest with digest %s not found", digest)
