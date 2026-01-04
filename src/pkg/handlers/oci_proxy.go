@@ -19,7 +19,15 @@ import (
 
 // proxyBlob fetches a blob from upstream, caches it completely, then serves from cache
 func (h *OCIHandler) proxyBlob(c *fiber.Ctx, name, digest string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	// Acquire semaphore to limit concurrent downloads (prevents OOM with large images)
+	select {
+	case blobDownloadSemaphore <- struct{}{}:
+		defer func() { <-blobDownloadSemaphore }()
+	case <-c.Context().Done():
+		return c.SendStatus(408) // Request timeout
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
 	registryURL, upstreamName, err := h.proxyService.ResolveRegistry(name)
@@ -32,7 +40,7 @@ func (h *OCIHandler) proxyBlob(c *fiber.Ctx, name, digest string) error {
 		"registry":     registryURL,
 		"upstreamName": upstreamName,
 		"digest":       digest,
-	}).Debug("Fetching blob from upstream")
+	}).Debug("Fetching blob from upstream (semaphore acquired)")
 
 	reader, size, err := h.proxyService.GetBlob(ctx, registryURL, upstreamName, digest)
 	if err != nil {

@@ -18,6 +18,10 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+// blobDownloadSemaphore limits concurrent blob downloads to prevent OOM
+// with large images like vllm (5.6GB with 8+ parallel layers)
+var blobDownloadSemaphore = make(chan struct{}, 3)
+
 type OCIHandler struct {
 	log          *utils.Logger
 	chartService interfaces.ChartServiceInterface
@@ -62,12 +66,12 @@ func (h *OCIHandler) GetBlob(c *fiber.Ctx) error {
 		"digest": digest,
 	}).Debug("Processing blob download request")
 
-	// Try local first
-	blobData, err := h.getBlobByDigest(digest)
-	if err == nil {
+	// Try local first - use SendFile to avoid loading entire blob into memory
+	blobPath := h.pathManager.GetBlobPath(digest)
+	if _, err := os.Stat(blobPath); err == nil {
 		c.Set("Docker-Content-Digest", digest)
 		c.Set("Content-Type", "application/octet-stream")
-		return c.Send(blobData)
+		return c.SendFile(blobPath)
 	}
 
 	// Not found locally - try proxy if enabled
@@ -80,12 +84,8 @@ func (h *OCIHandler) GetBlob(c *fiber.Ctx) error {
 		return h.proxyBlob(c, name, digest)
 	}
 
-	if os.IsNotExist(err) {
-		h.log.WithFunc().WithError(err).Debug("Blob not found")
-		return c.SendStatus(404)
-	}
-	h.log.WithFunc().WithError(err).Error("Failed to retrieve blob")
-	return c.SendStatus(500)
+	h.log.WithFunc().Debug("Blob not found")
+	return c.SendStatus(404)
 }
 
 func (h *OCIHandler) HandleCatalog(c *fiber.Ctx) error {
