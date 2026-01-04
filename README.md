@@ -8,14 +8,15 @@ oci storage is a simple yet powerful solution that allows you to host your own H
 
 ## ✨ Features
 
-- 📦 Complete OCI registry for Helm charts
+- 📦 Complete OCI registry for Helm charts and container images
 - 🔄 Version and tag management
 - 🔒 Simple and secure authentication
 - 🌐 REST API for programmatic interaction
-- 📊 Web interface for chart management and visualization
+- 📊 Web interface for chart and image management
 - 🔍 Search and filtering of available charts
 - 💾 Backup to AWS / GCP buckets
 - 🔄 Simple backup with a dedicated button
+- 🔀 **Pull-through proxy/cache** for container images from multiple registries
 
 ## 🛠️ Prerequisites
 
@@ -165,3 +166,75 @@ Contributions are welcome! Feel free to open an issue or a pull request.
 ## 📄 License
 
 This project is under MIT license.
+
+## 🔀 Proxy/Cache Feature
+
+oci-storage can act as a pull-through cache for container images from multiple registries. This reduces bandwidth usage, speeds up image pulls, and provides resilience against registry outages.
+
+### Supported Registries
+
+Configure upstream registries in `config.yaml`:
+
+```yaml
+proxy:
+  enabled: true
+  cache:
+    maxSizeGB: 50
+  registries:
+    - name: "docker.io"
+      url: "https://registry-1.docker.io"
+    - name: "ghcr.io"
+      url: "https://ghcr.io"
+    - name: "gcr.io"
+      url: "https://gcr.io"
+    - name: "quay.io"
+      url: "https://quay.io"
+    - name: "nvcr.io"
+      url: "https://nvcr.io"
+    - name: "registry.k8s.io"
+      url: "https://registry.k8s.io"
+```
+
+### Using with Kubernetes (Kyverno)
+
+Use Kyverno to automatically rewrite image references to use the proxy:
+
+```yaml
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: rewrite-container-images
+spec:
+  rules:
+    - name: rewrite-images
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      mutate:
+        patchStrategicMerge:
+          spec:
+            containers:
+              - (name): "*"
+                image: "oci-storage.example.com/proxy/{{image}}"
+```
+
+### Performance Optimizations
+
+The proxy includes several optimizations for handling large images (5GB+):
+
+- **Concurrency limiter**: Limits parallel blob downloads to 3 to prevent OOM
+- **Atomic caching**: Uses temp files with atomic rename to prevent corrupted cache entries
+- **Size verification**: Validates downloaded blob size matches expected size
+- **Extended timeouts**: 30-minute context timeout for very large blob downloads
+- **Memory-efficient serving**: Uses `SendFile` instead of loading blobs into memory
+
+### Pulling Images Through the Proxy
+
+```bash
+# Direct pull through proxy
+docker pull oci-storage.example.com/proxy/docker.io/library/nginx:latest
+
+# Or configure containerd/docker to use as mirror
+```
