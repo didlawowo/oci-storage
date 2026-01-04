@@ -40,7 +40,9 @@ func NewProxyService(cfg *config.Config, log *utils.Logger) *ProxyService {
 		pathManager: pm,
 		log:         log,
 		httpClient: &http.Client{
-			Timeout: 60 * time.Second,
+			// No global timeout - we use context timeouts per-request instead
+			// Global timeout would kill large blob downloads (5GB+ can take 10+ minutes)
+			Timeout: 0,
 		},
 		cacheState: &models.CacheState{
 			MaxSize: int64(cfg.Proxy.Cache.MaxSizeGB) * 1024 * 1024 * 1024,

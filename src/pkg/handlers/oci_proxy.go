@@ -27,7 +27,7 @@ func (h *OCIHandler) proxyBlob(c *fiber.Ctx, name, digest string) error {
 		return c.SendStatus(408) // Request timeout
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 
 	registryURL, upstreamName, err := h.proxyService.ResolveRegistry(name)
