@@ -37,10 +37,10 @@ initContainers:
 resources:
   limits:
     cpu: 1000m
-    memory: 2Gi
+    memory: 4Gi
   requests:
     cpu: 200m
-    memory: 512Mi
+    memory: 1Gi
 # volumes 
 persistentVolumesClaims:
   - name: oci-storage-data
