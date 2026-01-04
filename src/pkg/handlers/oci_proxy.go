@@ -54,9 +54,9 @@ func (h *OCIHandler) proxyBlob(c *fiber.Ctx, name, digest string) error {
 		h.log.WithError(err).Warn("Failed to create blob directory")
 	}
 
-	// Download completely to cache first, then serve from cache
-	// This prevents race conditions with concurrent requests
-	file, err := os.Create(blobPath)
+	// Download to temp file first, then rename atomically to prevent corrupted cache
+	tempPath := blobPath + ".tmp"
+	file, err := os.Create(tempPath)
 	if err != nil {
 		h.log.WithError(err).Warn("Failed to create blob cache file, streaming without caching")
 		c.Set("Docker-Content-Digest", digest)
@@ -71,7 +71,25 @@ func (h *OCIHandler) proxyBlob(c *fiber.Ctx, name, digest string) error {
 	file.Close()
 	if err != nil {
 		h.log.WithError(err).Error("Failed to download blob to cache")
-		os.Remove(blobPath)
+		os.Remove(tempPath)
+		return c.SendStatus(502)
+	}
+
+	// Verify size matches expected (if known) to detect truncated downloads
+	if size > 0 && written != size {
+		h.log.WithFields(logrus.Fields{
+			"digest":   digest,
+			"expected": size,
+			"written":  written,
+		}).Error("Blob size mismatch - download truncated")
+		os.Remove(tempPath)
+		return c.SendStatus(502)
+	}
+
+	// Atomically rename temp file to final path
+	if err := os.Rename(tempPath, blobPath); err != nil {
+		h.log.WithError(err).Error("Failed to rename temp blob file")
+		os.Remove(tempPath)
 		return c.SendStatus(502)
 	}
 
