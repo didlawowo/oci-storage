@@ -359,32 +359,80 @@ async function purgeCache() {
   }
 }
 
+// Global state for image filtering
+let allDockerImages = [];
+let currentImageFilter = 'all';
+
 /**
- * Fetch and display cached Docker images from proxy
+ * Fetch and display all Docker images (pushed + cached from proxy)
  */
 async function loadDockerImages() {
   const container = document.getElementById("imagesContainer");
   const noImagesMessage = document.getElementById("noImagesMessage");
 
   try {
-    const response = await fetch("/cache/images");
-    const data = await response.json();
+    // Fetch both pushed images and cached proxy images
+    const [pushedResponse, cachedResponse] = await Promise.all([
+      fetch("/images"),
+      fetch("/cache/images")
+    ]);
 
-    if (!data.images || data.images.length === 0) {
-      container.innerHTML = "";
-      noImagesMessage.style.display = "flex";
-      return;
+    const pushedData = await pushedResponse.json();
+    const cachedData = await cachedResponse.json();
+
+    // Convert pushed images to a common format
+    const pushedImages = [];
+    if (pushedData.images) {
+      for (const group of pushedData.images) {
+        for (const tag of group.tags) {
+          pushedImages.push({
+            name: tag.name || group.name,
+            tag: tag.tag,
+            size: tag.size,
+            digest: tag.digest,
+            created: tag.created,
+            sourceRegistry: "local",
+            cachedAt: tag.created,
+            lastAccessed: tag.created,
+            isPushed: true // Mark as directly pushed
+          });
+        }
+      }
     }
 
-    // Sort by lastAccessed (most recent first)
-    const sortedImages = data.images.sort((a, b) =>
-      new Date(b.lastAccessed) - new Date(a.lastAccessed)
-    );
+    // Mark cached images as proxied
+    const cachedImages = (cachedData.images || []).map(img => ({
+      ...img,
+      isPushed: false
+    }));
 
-    noImagesMessage.style.display = "none";
-    container.innerHTML = sortedImages
-      .map((image) => createCachedImageCard(image))
-      .join("");
+    // Combine and deduplicate (prefer pushed over cached if same name:tag)
+    const imageMap = new Map();
+
+    // Add cached images first
+    for (const img of cachedImages) {
+      const key = `${img.name}:${img.tag}`;
+      imageMap.set(key, img);
+    }
+
+    // Pushed images override cached
+    for (const img of pushedImages) {
+      const key = `${img.name}:${img.tag}`;
+      imageMap.set(key, img);
+    }
+
+    // Store all images globally for filtering
+    allDockerImages = Array.from(imageMap.values());
+
+    // Sort by lastAccessed/created (most recent first)
+    allDockerImages.sort((a, b) => {
+      const dateA = new Date(a.lastAccessed || a.created || 0);
+      const dateB = new Date(b.lastAccessed || b.created || 0);
+      return dateB - dateA;
+    });
+
+    // Apply current filter and render
+    renderFilteredImages();
   } catch (error) {
     console.error("Error loading Docker images:", error);
     container.innerHTML = `
@@ -397,11 +445,93 @@ async function loadDockerImages() {
 }
 
 /**
- * Create HTML card for a cached Docker image (from proxy cache)
- * @param {Object} image - CachedImageMetadata object
+ * Filter images by type (all, pushed, proxy)
+ * @param {string} filterType - Filter type: 'all', 'pushed', or 'proxy'
+ */
+function filterImages(filterType) {
+  currentImageFilter = filterType;
+
+  // Update button styles
+  const buttons = document.querySelectorAll('.filter-btn');
+  buttons.forEach(btn => {
+    btn.classList.remove('active', 'bg-gray-700', 'text-white');
+    // Reset to default colors based on button type
+    if (btn.id === 'filterAll') {
+      btn.classList.add('bg-gray-200', 'hover:bg-gray-300');
+    }
+  });
+
+  // Highlight active button
+  const activeBtn = document.getElementById(`filter${filterType.charAt(0).toUpperCase() + filterType.slice(1)}`);
+  if (activeBtn) {
+    activeBtn.classList.add('active');
+    if (filterType === 'all') {
+      activeBtn.classList.remove('bg-gray-200', 'hover:bg-gray-300');
+      activeBtn.classList.add('bg-gray-700', 'text-white');
+    } else if (filterType === 'pushed') {
+      activeBtn.classList.add('bg-green-500', 'text-white');
+      activeBtn.classList.remove('bg-green-100', 'text-green-800');
+    } else if (filterType === 'proxy') {
+      activeBtn.classList.add('bg-purple-500', 'text-white');
+      activeBtn.classList.remove('bg-purple-100', 'text-purple-800');
+    }
+  }
+
+  renderFilteredImages();
+}
+
+/**
+ * Render images based on current filter
+ */
+function renderFilteredImages() {
+  const container = document.getElementById("imagesContainer");
+  const noImagesMessage = document.getElementById("noImagesMessage");
+  const filterCountEl = document.getElementById("filterCount");
+
+  // Apply filter
+  let filteredImages = allDockerImages;
+  if (currentImageFilter === 'pushed') {
+    filteredImages = allDockerImages.filter(img => img.isPushed === true);
+  } else if (currentImageFilter === 'proxy') {
+    filteredImages = allDockerImages.filter(img => img.isPushed !== true);
+  }
+
+  // Update filter count
+  const pushedCount = allDockerImages.filter(img => img.isPushed === true).length;
+  const proxyCount = allDockerImages.filter(img => img.isPushed !== true).length;
+  if (filterCountEl) {
+    filterCountEl.textContent = `${filteredImages.length} shown (${pushedCount} pushed, ${proxyCount} proxy)`;
+  }
+
+  if (filteredImages.length === 0) {
+    container.innerHTML = "";
+    if (allDockerImages.length === 0) {
+      noImagesMessage.style.display = "flex";
+    } else {
+      // Show "no matches" message when filter has no results
+      container.innerHTML = `
+        <div class="col-span-full text-center text-gray-500 py-8">
+          <i class="material-icons text-4xl mb-2">filter_list_off</i>
+          <p>No ${currentImageFilter === 'pushed' ? 'pushed' : 'proxy'} images found</p>
+        </div>
+      `;
+      noImagesMessage.style.display = "none";
+    }
+    return;
+  }
+
+  noImagesMessage.style.display = "none";
+  container.innerHTML = filteredImages
+    .map((image) => createImageCard(image))
+    .join("");
+}
+
+/**
+ * Create HTML card for a Docker image (both pushed and cached)
+ * @param {Object} image - Image metadata object
  * @returns {string} HTML string for the image card
  */
-function createCachedImageCard(image) {
+function createImageCard(image) {
   const formatSize = (bytes) => {
     if (!bytes) return "Unknown";
     const sizes = ["B", "KB", "MB", "GB"];
@@ -423,28 +553,42 @@ function createCachedImageCard(image) {
     tag = image.originalRef.split(':').pop();
   }
 
+  // Determine the source badge and color based on isPushed
+  const isPushed = image.isPushed === true;
+  const sourceLabel = isPushed ? "Pushed" : (image.sourceRegistry || "docker.io");
+  const sourceColor = isPushed ? "bg-green-100 text-green-800" : "bg-purple-100 text-purple-800";
+  const headerColor = isPushed ? "text-green-600" : "text-purple-600";
+  const deleteHandler = isPushed
+    ? `deleteImage('${name}', '${tag}')`
+    : `deleteCachedImage('${name}', '${tag}')`;
+
   return `
         <div class="bg-white rounded-lg shadow-md p-6 flex flex-col h-[220px]" data-image-name="${name}" data-image-tag="${tag}">
             <div class="flex justify-between items-start mb-3">
                 <div class="flex-1 min-w-0">
+                    <div class="flex items-center gap-2 mb-1">
+                        <span class="text-xs px-2 py-0.5 rounded ${sourceColor}">${sourceLabel}</span>
+                    </div>
                     <a href="/image/${name}/${encodeURIComponent(tag)}/details" class="hover:underline">
-                        <h2 class="text-lg font-bold text-purple-600 truncate" title="${name}">
+                        <h2 class="text-lg font-bold ${headerColor} truncate" title="${name}">
                             ${name}
                         </h2>
                     </a>
                     <p class="text-sm text-gray-600 mt-1">Tag: <span class="font-mono">${tag}</span></p>
                 </div>
                 <div class="flex gap-2 ml-2">
-                    <a href="#" onclick="deleteCachedImage('${name}', '${tag}'); return false;" class="tooltip-trigger" data-tooltip="Delete from cache">
+                    <a href="#" onclick="${deleteHandler}; return false;" class="tooltip-trigger" data-tooltip="Delete image">
                         <i class="material-icons icon-delete text-red-500 hover:text-red-700">delete</i>
                     </a>
                 </div>
             </div>
             <div class="flex-1 overflow-hidden text-sm text-gray-600">
                 <p class="mb-1"><span class="font-semibold">Size:</span> ${formatSize(image.size)}</p>
-                <p class="mb-1"><span class="font-semibold">Source:</span> ${image.sourceRegistry || "docker.io"}</p>
-                <p class="mb-1"><span class="font-semibold">Cached:</span> ${formatDate(image.cachedAt)}</p>
-                <p class="mb-1"><span class="font-semibold">Last Access:</span> ${formatDate(image.lastAccessed)}</p>
+                ${isPushed
+                    ? `<p class="mb-1"><span class="font-semibold">Created:</span> ${formatDate(image.created)}</p>`
+                    : `<p class="mb-1"><span class="font-semibold">Cached:</span> ${formatDate(image.cachedAt)}</p>
+                       <p class="mb-1"><span class="font-semibold">Last Access:</span> ${formatDate(image.lastAccessed)}</p>`
+                }
                 <p class="text-xs text-gray-400 truncate" title="${image.digest || ''}">
                     <span class="font-semibold">Digest:</span> ${
                       image.digest
@@ -455,6 +599,16 @@ function createCachedImageCard(image) {
             </div>
         </div>
     `;
+}
+
+/**
+ * Create HTML card for a cached Docker image (from proxy cache)
+ * @param {Object} image - CachedImageMetadata object
+ * @returns {string} HTML string for the image card
+ * @deprecated Use createImageCard instead
+ */
+function createCachedImageCard(image) {
+  return createImageCard({ ...image, isPushed: false });
 }
 
 /**
