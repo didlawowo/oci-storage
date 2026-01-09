@@ -454,57 +454,109 @@ func (h *OCIHandler) PutManifest(c *fiber.Ctx) error {
 		"reference": reference,
 	}).Debug("Processing manifest upload")
 
-	var manifest models.OCIManifest
-	if err := json.Unmarshal(c.Body(), &manifest); err != nil {
-		h.log.WithFunc().WithError(err).Error("Failed to parse manifest")
-		return c.SendStatus(500)
-	}
-
-	artifactType := models.DetectArtifactType(&manifest)
-
-	h.log.WithFunc().WithFields(logrus.Fields{
-		"name":         name,
-		"reference":    reference,
-		"artifactType": artifactType,
-		"configType":   manifest.Config.MediaType,
-	}).Debug("Detected artifact type")
-
+	// CRITICAL: Use the raw body bytes for storage to preserve exact content
+	// Re-marshaling JSON changes field order and formatting, corrupting the digest
 	manifestData := c.Body()
 	digest := sha256.Sum256(manifestData)
 	digestStr := fmt.Sprintf("sha256:%x", digest)
 
-	switch artifactType {
-	case models.ArtifactTypeHelmChart:
-		if err := h.handleHelmChartManifest(name, reference, &manifest); err != nil {
-			h.log.WithFunc().WithError(err).Error("Failed to handle Helm chart")
-			return c.SendStatus(500)
-		}
-		manifestPath := h.pathManager.GetManifestPath(name, reference)
+	// Always save manifest to blob storage first (for digest-based lookups)
+	// This ensures the exact bytes are preserved and can be retrieved by digest
+	blobPath := h.pathManager.GetBlobPath(digestStr)
+	if err := os.MkdirAll(filepath.Dir(blobPath), 0755); err != nil {
+		h.log.WithFunc().WithError(err).Error("Failed to create blob directory")
+		return c.SendStatus(500)
+	}
+	if err := os.WriteFile(blobPath, manifestData, 0644); err != nil {
+		h.log.WithFunc().WithError(err).Error("Failed to save manifest blob")
+		return c.SendStatus(500)
+	}
+
+	// Parse manifest to determine type and handle accordingly
+	var manifest models.OCIManifest
+	if err := json.Unmarshal(manifestData, &manifest); err != nil {
+		h.log.WithFunc().WithError(err).Error("Failed to parse manifest")
+		return c.SendStatus(500)
+	}
+
+	// Check if this is a manifest list/index (multi-arch image)
+	isManifestList := manifest.MediaType == models.MediaTypeOCIManifestList ||
+		manifest.MediaType == models.MediaTypeDockerManifestList
+
+	if isManifestList {
+		// Handle manifest list/index - preserve raw bytes, don't re-marshal
+		h.log.WithFunc().WithFields(logrus.Fields{
+			"name":      name,
+			"reference": reference,
+			"mediaType": manifest.MediaType,
+			"size":      len(manifestData),
+		}).Debug("Processing manifest list/index")
+
+		// Save manifest to tag-based path (preserving raw bytes)
+		manifestPath := h.pathManager.GetImageManifestPath(name, reference)
 		if err := h.saveManifestFile(manifestPath, manifestData); err != nil {
 			return c.SendStatus(500)
 		}
 
-	case models.ArtifactTypeDockerImage:
+		// Save metadata for image listing (without corrupting the manifest)
 		if h.imageService != nil {
-			if err := h.imageService.SaveImage(name, reference, &manifest); err != nil {
-				h.log.WithFunc().WithError(err).Error("Failed to save Docker image")
+			var index models.OCIIndex
+			if err := json.Unmarshal(manifestData, &index); err == nil {
+				// Calculate approximate total size from manifest descriptors
+				var totalSize int64
+				for _, m := range index.Manifests {
+					totalSize += m.Size
+				}
+				if err := h.imageService.SaveImageIndex(name, reference, manifestData, totalSize); err != nil {
+					h.log.WithFunc().WithError(err).Warn("Failed to save manifest list metadata")
+				}
+			}
+		}
+	} else {
+		// Handle single-platform manifest
+		artifactType := models.DetectArtifactType(&manifest)
+
+		h.log.WithFunc().WithFields(logrus.Fields{
+			"name":         name,
+			"reference":    reference,
+			"artifactType": artifactType,
+			"configType":   manifest.Config.MediaType,
+		}).Debug("Detected artifact type")
+
+		switch artifactType {
+		case models.ArtifactTypeHelmChart:
+			if err := h.handleHelmChartManifest(name, reference, &manifest); err != nil {
+				h.log.WithFunc().WithError(err).Error("Failed to handle Helm chart")
 				return c.SendStatus(500)
 			}
-		} else {
-			h.log.WithFunc().Warn("Image service not configured, saving manifest only")
+			manifestPath := h.pathManager.GetManifestPath(name, reference)
+			if err := h.saveManifestFile(manifestPath, manifestData); err != nil {
+				return c.SendStatus(500)
+			}
+
+		case models.ArtifactTypeDockerImage:
+			// Save manifest to tag-based path (preserving raw bytes)
 			manifestPath := h.pathManager.GetImageManifestPath(name, reference)
 			if err := h.saveManifestFile(manifestPath, manifestData); err != nil {
 				return c.SendStatus(500)
 			}
-		}
 
-	default:
-		h.log.WithFunc().WithFields(logrus.Fields{
-			"configMediaType": manifest.Config.MediaType,
-		}).Warn("Unknown artifact type, saving as generic manifest")
-		manifestPath := h.pathManager.GetManifestPath(name, reference)
-		if err := h.saveManifestFile(manifestPath, manifestData); err != nil {
-			return c.SendStatus(500)
+			// Save metadata for image listing
+			if h.imageService != nil {
+				if err := h.imageService.SaveImage(name, reference, &manifest); err != nil {
+					h.log.WithFunc().WithError(err).Warn("Failed to save image metadata")
+					// Don't fail - manifest is already saved correctly
+				}
+			}
+
+		default:
+			h.log.WithFunc().WithFields(logrus.Fields{
+				"configMediaType": manifest.Config.MediaType,
+			}).Warn("Unknown artifact type, saving as generic manifest")
+			manifestPath := h.pathManager.GetManifestPath(name, reference)
+			if err := h.saveManifestFile(manifestPath, manifestData); err != nil {
+				return c.SendStatus(500)
+			}
 		}
 	}
 
@@ -512,10 +564,10 @@ func (h *OCIHandler) PutManifest(c *fiber.Ctx) error {
 	c.Set("Location", fmt.Sprintf("/v2/%s/manifests/%s", name, digestStr))
 
 	h.log.WithFunc().WithFields(logrus.Fields{
-		"name":         name,
-		"reference":    reference,
-		"artifactType": artifactType,
-		"digest":       digestStr,
+		"name":      name,
+		"reference": reference,
+		"digest":    digestStr,
+		"size":      len(manifestData),
 	}).Info("Manifest saved successfully")
 
 	return c.SendStatus(201)

@@ -46,12 +46,14 @@ func (s *ImageService) GetPathManager() *utils.PathManager {
 	return s.pathManager
 }
 
-// SaveImage saves a Docker image manifest and updates metadata
+// SaveImage saves Docker image metadata (manifest should already be saved by handler)
+// IMPORTANT: This function only saves metadata, NOT the manifest itself.
+// The manifest must be saved separately using raw bytes to preserve digest integrity.
 func (s *ImageService) SaveImage(name, reference string, manifest *models.OCIManifest) error {
 	s.log.WithFields(logrus.Fields{
 		"name":      name,
 		"reference": reference,
-	}).Info("Saving Docker image")
+	}).Info("Saving Docker image metadata")
 
 	// Create image directory
 	imageDir := s.getImageDir(name)
@@ -59,26 +61,13 @@ func (s *ImageService) SaveImage(name, reference string, manifest *models.OCIMan
 		return fmt.Errorf("failed to create image directory: %w", err)
 	}
 
-	// Save manifest
+	// Calculate digest from manifest for metadata (note: this may differ from actual stored manifest)
+	// The actual manifest with correct digest is stored by the handler
 	manifestData, err := json.Marshal(manifest)
 	if err != nil {
-		return fmt.Errorf("failed to marshal manifest: %w", err)
+		return fmt.Errorf("failed to marshal manifest for digest calculation: %w", err)
 	}
-
-	manifestPath := s.getManifestPath(name, reference)
-	if err := os.MkdirAll(filepath.Dir(manifestPath), 0755); err != nil {
-		return fmt.Errorf("failed to create manifest directory: %w", err)
-	}
-	if err := os.WriteFile(manifestPath, manifestData, 0644); err != nil {
-		return fmt.Errorf("failed to save manifest: %w", err)
-	}
-
-	// Calculate and save digest-based reference
 	digest := fmt.Sprintf("sha256:%x", sha256.Sum256(manifestData))
-	digestPath := s.getManifestPath(name, digest)
-	if err := os.WriteFile(digestPath, manifestData, 0644); err != nil {
-		s.log.WithError(err).Warn("Failed to save digest reference")
-	}
 
 	// Create/update metadata
 	metadata := &models.ImageMetadata{
@@ -111,7 +100,7 @@ func (s *ImageService) SaveImage(name, reference string, manifest *models.OCIMan
 		"tag":    reference,
 		"digest": digest,
 		"size":   metadata.Size,
-	}).Info("Docker image saved successfully")
+	}).Info("Docker image metadata saved successfully")
 
 	return nil
 }

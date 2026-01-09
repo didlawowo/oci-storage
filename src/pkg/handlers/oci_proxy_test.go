@@ -430,15 +430,22 @@ func TestDeepNestedPath_3Segments_HeadManifest(t *testing.T) {
 	app.Head("/v2/:ns1/:ns2/:name/manifests/:reference", handler.HandleManifestDeepNested)
 
 	digest := "sha256:abc123"
+	upstreamManifest := []byte(`{"schemaVersion": 2, "mediaType": "application/vnd.oci.image.manifest.v1+json"}`)
 
 	mockProxyService.On("IsEnabled").Return(true)
-	// HEAD requests should NOT proxy - they return 404 if manifest not found locally
+	// HEAD requests DO proxy for proxy/ paths - needed for container runtime manifest checks
+	mockProxyService.On("ResolveRegistry", "proxy/docker.io/nginx").Return("https://registry-1.docker.io", "library/nginx", nil)
+	mockProxyService.On("GetManifest", mock.Anything, "https://registry-1.docker.io", "library/nginx", digest).
+		Return(upstreamManifest, "application/vnd.oci.image.manifest.v1+json", nil)
+	mockProxyService.On("AddToCache", mock.Anything).Return(nil)
 
 	req := httptest.NewRequest("HEAD", "/v2/proxy/docker.io/nginx/manifests/"+digest, nil)
 	resp, err := app.Test(req)
 
 	assert.NoError(t, err)
-	assert.Equal(t, 404, resp.StatusCode)
+	assert.Equal(t, 200, resp.StatusCode)
+	// HEAD should return Content-Length but no body
+	assert.NotEmpty(t, resp.Header.Get("Content-Length"))
 }
 
 func TestDeepNestedPath_3Segments_GetBlob(t *testing.T) {
@@ -496,15 +503,22 @@ func TestDeepNestedPath_4Segments_HeadManifest(t *testing.T) {
 	app.Head("/v2/:ns1/:ns2/:ns3/:name/manifests/:reference", handler.HandleManifestDeepNested4)
 
 	digest := "sha256:abc123"
+	upstreamManifest := []byte(`{"schemaVersion": 2, "mediaType": "application/vnd.oci.image.manifest.v1+json"}`)
 
 	mockProxyService.On("IsEnabled").Return(true)
-	// HEAD requests should NOT proxy - they return 404 if manifest not found locally
+	// HEAD requests DO proxy for proxy/ paths - needed for container runtime manifest checks
+	mockProxyService.On("ResolveRegistry", "proxy/docker.io/library/nginx").Return("https://registry-1.docker.io", "library/nginx", nil)
+	mockProxyService.On("GetManifest", mock.Anything, "https://registry-1.docker.io", "library/nginx", digest).
+		Return(upstreamManifest, "application/vnd.oci.image.manifest.v1+json", nil)
+	mockProxyService.On("AddToCache", mock.Anything).Return(nil)
 
 	req := httptest.NewRequest("HEAD", "/v2/proxy/docker.io/library/nginx/manifests/"+digest, nil)
 	resp, err := app.Test(req)
 
 	assert.NoError(t, err)
-	assert.Equal(t, 404, resp.StatusCode)
+	assert.Equal(t, 200, resp.StatusCode)
+	// HEAD should return Content-Length but no body
+	assert.NotEmpty(t, resp.Header.Get("Content-Length"))
 }
 
 func TestDeepNestedPath_4Segments_GetBlob(t *testing.T) {

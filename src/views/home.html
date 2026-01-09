@@ -139,6 +139,23 @@
 
         <!-- Docker Images Section -->
         <div id="imagesSection" style="display: none;">
+            <!-- Filter Bar -->
+            <div class="mb-4 flex items-center gap-4">
+                <span class="text-sm font-medium text-gray-700">Filter:</span>
+                <div class="flex gap-2">
+                    <button onclick="filterImages('all')" id="filterAll" class="filter-btn active px-3 py-1.5 text-sm rounded-full bg-gray-700 text-white transition-colors">
+                        All
+                    </button>
+                    <button onclick="filterImages('pushed')" id="filterPushed" class="filter-btn px-3 py-1.5 text-sm rounded-full bg-green-100 text-green-800 hover:bg-green-200 transition-colors">
+                        <i class="material-icons text-sm align-middle">upload</i> Pushed
+                    </button>
+                    <button onclick="filterImages('proxy')" id="filterProxy" class="filter-btn px-3 py-1.5 text-sm rounded-full bg-purple-100 text-purple-800 hover:bg-purple-200 transition-colors">
+                        <i class="material-icons text-sm align-middle">cloud_download</i> Proxy
+                    </button>
+                </div>
+                <span id="filterCount" class="text-sm text-gray-500 ml-auto"></span>
+            </div>
+
             <!-- Cache Status Bar -->
             <div id="cacheStatusBar" class="mb-6 p-4 bg-gradient-to-r from-purple-50 to-blue-50 rounded-lg border border-purple-200">
                 <div class="flex justify-between items-center mb-2">
