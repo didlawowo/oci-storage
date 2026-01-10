@@ -23,6 +23,11 @@ proxy:
   enabled: true
   cache:
     maxSizeGB: 10
+  timeout:
+    blobBaseSeconds: 60      # Base timeout for blob operations
+    blobPerGBSeconds: 120    # Additional seconds per GB (e.g., 2GB blob = 60 + 240 = 300s)
+    manifestSeconds: 30      # Timeout for manifest operations
+    maxTimeoutMinutes: 30    # Maximum timeout cap (30 min)
   registries:
   - name: "docker.io"
     url: "https://registry-1.docker.io"

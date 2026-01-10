@@ -50,10 +50,19 @@ type CacheConfig struct {
 	MaxSizeGB int `yaml:"maxSizeGB"` // Maximum cache size in GB
 }
 
+// TimeoutConfig defines timeout settings for proxy operations
+type TimeoutConfig struct {
+	BlobBaseSeconds    int `yaml:"blobBaseSeconds"`    // Base timeout for blob operations (default: 60)
+	BlobPerGBSeconds   int `yaml:"blobPerGBSeconds"`   // Additional seconds per GB of blob size (default: 120)
+	ManifestSeconds    int `yaml:"manifestSeconds"`    // Timeout for manifest operations (default: 30)
+	MaxTimeoutMinutes  int `yaml:"maxTimeoutMinutes"`  // Maximum timeout cap (default: 30)
+}
+
 // ProxyConfig groups proxy-related settings
 type ProxyConfig struct {
 	Enabled    bool             `yaml:"enabled"`
 	Cache      CacheConfig      `yaml:"cache"`
+	Timeout    TimeoutConfig    `yaml:"timeout"`
 	Registries []RegistryConfig `yaml:"registries"`
 }
 
@@ -168,6 +177,42 @@ func loadConfigFromEnv(config *Config) {
 	if cacheSize := os.Getenv("PROXY_CACHE_SIZE_GB"); cacheSize != "" {
 		if size, err := strconv.Atoi(cacheSize); err == nil {
 			config.Proxy.Cache.MaxSizeGB = size
+		}
+	}
+
+	// Proxy timeout config with defaults
+	if config.Proxy.Timeout.BlobBaseSeconds == 0 {
+		config.Proxy.Timeout.BlobBaseSeconds = 60 // 1 minute base
+	}
+	if config.Proxy.Timeout.BlobPerGBSeconds == 0 {
+		config.Proxy.Timeout.BlobPerGBSeconds = 120 // 2 minutes per GB
+	}
+	if config.Proxy.Timeout.ManifestSeconds == 0 {
+		config.Proxy.Timeout.ManifestSeconds = 30
+	}
+	if config.Proxy.Timeout.MaxTimeoutMinutes == 0 {
+		config.Proxy.Timeout.MaxTimeoutMinutes = 30 // 30 min cap
+	}
+
+	// Override from env if set
+	if v := os.Getenv("PROXY_TIMEOUT_BLOB_BASE"); v != "" {
+		if val, err := strconv.Atoi(v); err == nil {
+			config.Proxy.Timeout.BlobBaseSeconds = val
+		}
+	}
+	if v := os.Getenv("PROXY_TIMEOUT_BLOB_PER_GB"); v != "" {
+		if val, err := strconv.Atoi(v); err == nil {
+			config.Proxy.Timeout.BlobPerGBSeconds = val
+		}
+	}
+	if v := os.Getenv("PROXY_TIMEOUT_MANIFEST"); v != "" {
+		if val, err := strconv.Atoi(v); err == nil {
+			config.Proxy.Timeout.ManifestSeconds = val
+		}
+	}
+	if v := os.Getenv("PROXY_TIMEOUT_MAX_MINUTES"); v != "" {
+		if val, err := strconv.Atoi(v); err == nil {
+			config.Proxy.Timeout.MaxTimeoutMinutes = val
 		}
 	}
 
