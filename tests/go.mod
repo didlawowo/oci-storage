@@ -5,7 +5,7 @@ go 1.24.0
 replace oci-storage => ../src
 
 require (
-	github.com/gofiber/fiber/v2 v2.52.7
+	github.com/gofiber/fiber/v2 v2.52.9
 	github.com/stretchr/testify v1.10.0
 	oci-storage v0.0.0-00010101000000-000000000000
 )
