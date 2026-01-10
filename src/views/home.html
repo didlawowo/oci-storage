@@ -140,7 +140,7 @@
         <!-- Docker Images Section -->
         <div id="imagesSection" style="display: none;">
             <!-- Filter Bar -->
-            <div class="mb-4 flex items-center gap-4">
+            <div class="mb-4 flex items-center gap-4 flex-wrap">
                 <span class="text-sm font-medium text-gray-700">Filter:</span>
                 <div class="flex gap-2">
                     <button onclick="filterImages('all')" id="filterAll" class="filter-btn active px-3 py-1.5 text-sm rounded-full bg-gray-700 text-white transition-colors">
@@ -153,6 +153,33 @@
                         <i class="material-icons text-sm align-middle">cloud_download</i> Proxy
                     </button>
                 </div>
+
+                <div class="border-l border-gray-300 h-6 mx-2"></div>
+
+                <!-- Sort Options -->
+                <span class="text-sm font-medium text-gray-700">Sort:</span>
+                <select id="sortSelect" onchange="sortImages(this.value)" class="text-sm border rounded px-2 py-1.5 bg-white">
+                    <option value="date-desc">Date (newest)</option>
+                    <option value="date-asc">Date (oldest)</option>
+                    <option value="size-desc">Size (largest)</option>
+                    <option value="size-asc">Size (smallest)</option>
+                    <option value="name-asc">Name (A-Z)</option>
+                    <option value="name-desc">Name (Z-A)</option>
+                </select>
+
+                <div class="border-l border-gray-300 h-6 mx-2"></div>
+
+                <!-- View Toggle -->
+                <span class="text-sm font-medium text-gray-700">View:</span>
+                <div class="flex gap-1">
+                    <button onclick="setViewMode('cards')" id="viewCards" class="view-btn p-1.5 rounded bg-gray-200 hover:bg-gray-300" title="Card view">
+                        <i class="material-icons text-sm">grid_view</i>
+                    </button>
+                    <button onclick="setViewMode('list')" id="viewList" class="view-btn active p-1.5 rounded bg-gray-700 text-white" title="List view">
+                        <i class="material-icons text-sm">view_list</i>
+                    </button>
+                </div>
+
                 <span id="filterCount" class="text-sm text-gray-500 ml-auto"></span>
             </div>
 

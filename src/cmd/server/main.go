@@ -49,7 +49,7 @@ func setupHandlers(
 
 ) (*handlers.HelmHandler, *handlers.ImageHandler, *handlers.OCIHandler, *handlers.ConfigHandler, *handlers.IndexHandler, *handlers.BackupHandler, *handlers.CacheHandler) {
 	helmHandler := handlers.NewHelmHandler(chartService, pathManager, log)
-	imageHandler := handlers.NewImageHandler(imageService, pathManager, log)
+	imageHandler := handlers.NewImageHandler(imageService, proxyService, pathManager, log)
 	ociHandler := handlers.NewOCIHandler(chartService, imageService, proxyService, cfg, log)
 	configHandler := handlers.NewConfigHandler(cfg, log)
 	indexHandler := handlers.NewIndexHandler(chartService, pathManager, log)

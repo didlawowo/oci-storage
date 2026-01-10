@@ -359,9 +359,11 @@ async function purgeCache() {
   }
 }
 
-// Global state for image filtering
+// Global state for image filtering, sorting, and view mode
 let allDockerImages = [];
 let currentImageFilter = 'all';
+let currentSortOrder = 'date-desc';
+let currentViewMode = 'list';
 
 /**
  * Fetch and display all Docker images (pushed + cached from proxy)
@@ -481,7 +483,92 @@ function filterImages(filterType) {
 }
 
 /**
- * Render images based on current filter
+ * Sort images by the selected criteria
+ * @param {string} sortOrder - Sort order: 'date-desc', 'date-asc', 'size-desc', 'size-asc', 'name-asc', 'name-desc'
+ */
+function sortImages(sortOrder) {
+  currentSortOrder = sortOrder;
+  renderFilteredImages();
+}
+
+/**
+ * Set the view mode (cards or list)
+ * @param {string} mode - View mode: 'cards' or 'list'
+ */
+function setViewMode(mode) {
+  currentViewMode = mode;
+
+  // Update button styles
+  const cardsBtn = document.getElementById('viewCards');
+  const listBtn = document.getElementById('viewList');
+
+  if (mode === 'cards') {
+    cardsBtn.classList.add('active', 'bg-gray-700', 'text-white');
+    cardsBtn.classList.remove('bg-gray-200', 'hover:bg-gray-300');
+    listBtn.classList.remove('active', 'bg-gray-700', 'text-white');
+    listBtn.classList.add('bg-gray-200', 'hover:bg-gray-300');
+  } else {
+    listBtn.classList.add('active', 'bg-gray-700', 'text-white');
+    listBtn.classList.remove('bg-gray-200', 'hover:bg-gray-300');
+    cardsBtn.classList.remove('active', 'bg-gray-700', 'text-white');
+    cardsBtn.classList.add('bg-gray-200', 'hover:bg-gray-300');
+  }
+
+  renderFilteredImages();
+}
+
+/**
+ * Deduplicate images by digest - group images with same digest together
+ * @param {Array} images - Array of image metadata objects
+ * @returns {Array} Deduplicated array with combined tags
+ */
+function deduplicateByDigest(images) {
+  const digestMap = new Map();
+
+  for (const img of images) {
+    const digest = img.digest;
+    if (!digest) {
+      // No digest - keep as separate entry with unique key
+      digestMap.set(`no-digest-${img.name}-${img.tag}`, { ...img, allTags: [img.tag], allNames: [img.name] });
+      continue;
+    }
+
+    if (digestMap.has(digest)) {
+      const existing = digestMap.get(digest);
+      // Add tag if not already present
+      const tagKey = `${img.name}:${img.tag}`;
+      const existingTagKey = `${existing.name}:${existing.tag}`;
+      if (tagKey !== existingTagKey) {
+        if (!existing.allTags.includes(img.tag)) {
+          existing.allTags.push(img.tag);
+        }
+        if (!existing.allNames.includes(img.name)) {
+          existing.allNames.push(img.name);
+        }
+      }
+      // Keep most recent date
+      const existingDate = new Date(existing.lastAccessed || existing.cachedAt || existing.created || 0);
+      const newDate = new Date(img.lastAccessed || img.cachedAt || img.created || 0);
+      if (newDate > existingDate) {
+        existing.lastAccessed = img.lastAccessed;
+        existing.cachedAt = img.cachedAt;
+        existing.created = img.created;
+      }
+      // Prefer pushed over proxy
+      if (img.isPushed && !existing.isPushed) {
+        existing.isPushed = true;
+        existing.sourceRegistry = img.sourceRegistry;
+      }
+    } else {
+      digestMap.set(digest, { ...img, allTags: [img.tag], allNames: [img.name] });
+    }
+  }
+
+  return Array.from(digestMap.values());
+}
+
+/**
+ * Render images based on current filter, sort order, and view mode
  */
 function renderFilteredImages() {
   const container = document.getElementById("imagesContainer");
@@ -489,18 +576,42 @@ function renderFilteredImages() {
   const filterCountEl = document.getElementById("filterCount");
 
   // Apply filter
-  let filteredImages = allDockerImages;
+  let filteredImages = [...allDockerImages];
   if (currentImageFilter === 'pushed') {
-    filteredImages = allDockerImages.filter(img => img.isPushed === true);
+    filteredImages = filteredImages.filter(img => img.isPushed === true);
   } else if (currentImageFilter === 'proxy') {
-    filteredImages = allDockerImages.filter(img => img.isPushed !== true);
+    filteredImages = filteredImages.filter(img => img.isPushed !== true);
   }
 
-  // Update filter count
-  const pushedCount = allDockerImages.filter(img => img.isPushed === true).length;
-  const proxyCount = allDockerImages.filter(img => img.isPushed !== true).length;
+  // Deduplicate by digest
+  filteredImages = deduplicateByDigest(filteredImages);
+
+  // Apply sort
+  filteredImages.sort((a, b) => {
+    switch (currentSortOrder) {
+      case 'date-desc':
+        return new Date(b.lastAccessed || b.cachedAt || b.created || 0) - new Date(a.lastAccessed || a.cachedAt || a.created || 0);
+      case 'date-asc':
+        return new Date(a.lastAccessed || a.cachedAt || a.created || 0) - new Date(b.lastAccessed || b.cachedAt || b.created || 0);
+      case 'size-desc':
+        return (b.size || 0) - (a.size || 0);
+      case 'size-asc':
+        return (a.size || 0) - (b.size || 0);
+      case 'name-asc':
+        return (a.name || '').localeCompare(b.name || '');
+      case 'name-desc':
+        return (b.name || '').localeCompare(a.name || '');
+      default:
+        return 0;
+    }
+  });
+
+  // Update filter count (show deduplicated count)
+  const totalUnique = deduplicateByDigest(allDockerImages).length;
+  const pushedCount = deduplicateByDigest(allDockerImages.filter(img => img.isPushed === true)).length;
+  const proxyCount = deduplicateByDigest(allDockerImages.filter(img => img.isPushed !== true)).length;
   if (filterCountEl) {
-    filterCountEl.textContent = `${filteredImages.length} shown (${pushedCount} pushed, ${proxyCount} proxy)`;
+    filterCountEl.textContent = `${filteredImages.length} unique (${pushedCount} pushed, ${proxyCount} proxy)`;
   }
 
   if (filteredImages.length === 0) {
@@ -521,9 +632,17 @@ function renderFilteredImages() {
   }
 
   noImagesMessage.style.display = "none";
-  container.innerHTML = filteredImages
-    .map((image) => createImageCard(image))
-    .join("");
+
+  // Render based on view mode
+  if (currentViewMode === 'list') {
+    container.className = 'w-full';
+    container.innerHTML = createImageListView(filteredImages);
+  } else {
+    container.className = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6';
+    container.innerHTML = filteredImages
+      .map((image) => createImageCard(image))
+      .join("");
+  }
 }
 
 /**
@@ -553,6 +672,12 @@ function createImageCard(image) {
     tag = image.originalRef.split(':').pop();
   }
 
+  // Get all tags if deduplicated
+  const allTags = image.allTags || [tag];
+  const tagsDisplay = allTags.length > 1
+    ? allTags.map(t => `<span class="inline-block bg-gray-100 px-1.5 py-0.5 rounded text-xs mr-1">${t}</span>`).join('')
+    : `<span class="font-mono">${tag}</span>`;
+
   // Determine the source badge and color based on isPushed
   const isPushed = image.isPushed === true;
   const sourceLabel = isPushed ? "Pushed" : (image.sourceRegistry || "docker.io");
@@ -568,13 +693,14 @@ function createImageCard(image) {
                 <div class="flex-1 min-w-0">
                     <div class="flex items-center gap-2 mb-1">
                         <span class="text-xs px-2 py-0.5 rounded ${sourceColor}">${sourceLabel}</span>
+                        ${allTags.length > 1 ? `<span class="text-xs text-gray-500">${allTags.length} tags</span>` : ''}
                     </div>
                     <a href="/image/${name}/${encodeURIComponent(tag)}/details" class="hover:underline">
                         <h2 class="text-lg font-bold ${headerColor} truncate" title="${name}">
                             ${name}
                         </h2>
                     </a>
-                    <p class="text-sm text-gray-600 mt-1">Tag: <span class="font-mono">${tag}</span></p>
+                    <p class="text-sm text-gray-600 mt-1">${allTags.length > 1 ? 'Tags: ' : 'Tag: '}${tagsDisplay}</p>
                 </div>
                 <div class="flex gap-2 ml-2">
                     <a href="#" onclick="${deleteHandler}; return false;" class="tooltip-trigger" data-tooltip="Delete image">
@@ -599,6 +725,100 @@ function createImageCard(image) {
             </div>
         </div>
     `;
+}
+
+/**
+ * Create HTML table view for Docker images
+ * @param {Array} images - Array of image metadata objects
+ * @returns {string} HTML string for the table view
+ */
+function createImageListView(images) {
+  const formatSize = (bytes) => {
+    if (!bytes) return "Unknown";
+    const sizes = ["B", "KB", "MB", "GB"];
+    const i = Math.floor(Math.log(bytes) / Math.log(1024));
+    return (bytes / Math.pow(1024, i)).toFixed(2) + " " + sizes[i];
+  };
+
+  const formatDate = (dateStr) => {
+    if (!dateStr) return "-";
+    const date = new Date(dateStr);
+    return date.toLocaleDateString() + " " + date.toLocaleTimeString();
+  };
+
+  const rows = images.map(image => {
+    const name = image.name;
+    let tag = image.tag;
+    if (image.originalRef && image.originalRef.includes(':')) {
+      tag = image.originalRef.split(':').pop();
+    }
+
+    // Get all tags if deduplicated
+    const allTags = image.allTags || [tag];
+    const allNames = image.allNames || [name];
+    const tagsDisplay = allTags.length > 1
+      ? allTags.map(t => `<span class="inline-block bg-gray-100 px-1.5 py-0.5 rounded text-xs mr-1 mb-1">${t}</span>`).join('')
+      : `<span class="font-mono">${tag}</span>`;
+    const namesDisplay = allNames.length > 1
+      ? allNames.join(', ')
+      : name;
+
+    const isPushed = image.isPushed === true;
+    const sourceLabel = isPushed ? "Pushed" : (image.sourceRegistry || "docker.io");
+    const sourceColor = isPushed ? "bg-green-100 text-green-800" : "bg-purple-100 text-purple-800";
+    const deleteHandler = isPushed
+      ? `deleteImage('${name}', '${tag}')`
+      : `deleteCachedImage('${name}', '${tag}')`;
+
+    const dateValue = isPushed
+      ? formatDate(image.created)
+      : formatDate(image.lastAccessed || image.cachedAt);
+
+    return `
+      <tr class="border-b hover:bg-gray-50">
+        <td class="py-3 px-4">
+          <span class="text-xs px-2 py-0.5 rounded ${sourceColor}">${sourceLabel}</span>
+        </td>
+        <td class="py-3 px-4">
+          <a href="/image/${name}/${encodeURIComponent(tag)}/details" class="text-blue-600 hover:underline font-medium">
+            ${namesDisplay}
+          </a>
+        </td>
+        <td class="py-3 px-4 text-sm">${tagsDisplay}</td>
+        <td class="py-3 px-4 text-right">${formatSize(image.size)}</td>
+        <td class="py-3 px-4 text-sm text-gray-600">${dateValue}</td>
+        <td class="py-3 px-4 font-mono text-xs text-gray-400" title="${image.digest || ''}">
+          ${image.digest ? image.digest.replace('sha256:', '').substring(0, 12) + '...' : '-'}
+        </td>
+        <td class="py-3 px-4 text-center">
+          <a href="#" onclick="${deleteHandler}; return false;" class="text-red-500 hover:text-red-700">
+            <i class="material-icons text-sm">delete</i>
+          </a>
+        </td>
+      </tr>
+    `;
+  }).join('');
+
+  return `
+    <div class="bg-white rounded-lg shadow-md overflow-hidden">
+      <table class="w-full">
+        <thead class="bg-gray-50 border-b">
+          <tr>
+            <th class="py-3 px-4 text-left text-xs font-semibold text-gray-600 uppercase">Source</th>
+            <th class="py-3 px-4 text-left text-xs font-semibold text-gray-600 uppercase">Name</th>
+            <th class="py-3 px-4 text-left text-xs font-semibold text-gray-600 uppercase">Tag</th>
+            <th class="py-3 px-4 text-right text-xs font-semibold text-gray-600 uppercase">Size</th>
+            <th class="py-3 px-4 text-left text-xs font-semibold text-gray-600 uppercase">Date</th>
+            <th class="py-3 px-4 text-left text-xs font-semibold text-gray-600 uppercase">Digest</th>
+            <th class="py-3 px-4 text-center text-xs font-semibold text-gray-600 uppercase">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows}
+        </tbody>
+      </table>
+    </div>
+  `;
 }
 
 /**

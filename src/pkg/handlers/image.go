@@ -14,17 +14,19 @@ import (
 
 // ImageHandler handles Docker image HTTP requests
 type ImageHandler struct {
-	log         *utils.Logger
-	service     interfaces.ImageServiceInterface
-	pathManager *utils.PathManager
+	log          *utils.Logger
+	service      interfaces.ImageServiceInterface
+	proxyService interfaces.ProxyServiceInterface
+	pathManager  *utils.PathManager
 }
 
 // NewImageHandler creates a new image handler
-func NewImageHandler(service interfaces.ImageServiceInterface, pathManager *utils.PathManager, log *utils.Logger) *ImageHandler {
+func NewImageHandler(service interfaces.ImageServiceInterface, proxyService interfaces.ProxyServiceInterface, pathManager *utils.PathManager, log *utils.Logger) *ImageHandler {
 	return &ImageHandler{
-		service:     service,
-		pathManager: pathManager,
-		log:         log,
+		service:      service,
+		proxyService: proxyService,
+		pathManager:  pathManager,
+		log:          log,
 	}
 }
 
@@ -225,10 +227,33 @@ func (h *ImageHandler) displayImageDetailsInternal(c *fiber.Ctx, name, tag strin
 		"tag":  tag,
 	}).Debug("Getting image details")
 
+	// Try standard image service first
 	metadata, err := h.service.GetImageMetadata(name, tag)
 	if err != nil {
-		h.log.WithFunc().WithError(err).Error("Image not found")
-		return HTTPError(c, 404, "Image not found")
+		// Try proxy cache if proxy is enabled
+		if h.proxyService != nil && h.proxyService.IsEnabled() {
+			cachedImages, cacheErr := h.proxyService.GetCachedImages()
+			if cacheErr == nil {
+				for _, cached := range cachedImages {
+					if cached.Name == name && cached.Tag == tag {
+						// Found in proxy cache - convert to ImageMetadata
+						metadata = &models.ImageMetadata{
+							Name:       cached.Name,
+							Repository: cached.Name,
+							Tag:        cached.Tag,
+							Digest:     cached.Digest,
+							Size:       cached.Size,
+							Created:    cached.CachedAt,
+						}
+						break
+					}
+				}
+			}
+		}
+		if metadata == nil {
+			h.log.WithFunc().WithError(err).Error("Image not found")
+			return HTTPError(c, 404, "Image not found")
+		}
 	}
 
 	config, _ := h.service.GetImageConfig(name, tag)
