@@ -18,9 +18,16 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-// blobDownloadSemaphore limits concurrent blob downloads to prevent OOM
-// with large images like vllm (5.6GB with 8+ parallel layers)
-var blobDownloadSemaphore = make(chan struct{}, 3)
+// Blob download semaphores - split by size for better throughput
+// Small blobs (<100MB): 5 concurrent - quick layers, configs, manifests
+// Large blobs (>=100MB): 7 concurrent - big model layers, base images
+// Total: 12 parallel downloads
+const blobSizeThreshold = 100 * 1024 * 1024 // 100MB
+
+var (
+	smallBlobSemaphore = make(chan struct{}, 5)
+	largeBlobSemaphore = make(chan struct{}, 7)
+)
 
 type OCIHandler struct {
 	log          *utils.Logger
@@ -60,6 +67,16 @@ func (h *OCIHandler) HandleOCIAPI(c *fiber.Ctx) error {
 func (h *OCIHandler) GetBlob(c *fiber.Ctx) error {
 	digest := c.Params("digest")
 	name := h.getName(c)
+
+	// Validate inputs to prevent path traversal
+	if err := utils.ValidateDigest(digest); err != nil {
+		h.log.WithField("digest", digest).Warn("Invalid digest format")
+		return HTTPError(c, 400, "Invalid digest format")
+	}
+	if err := utils.ValidateRepoName(name); err != nil {
+		h.log.WithField("name", name).Warn("Invalid repository name")
+		return HTTPError(c, 400, "Invalid repository name")
+	}
 
 	h.log.WithFunc().WithFields(logrus.Fields{
 		"name":   name,
@@ -163,6 +180,16 @@ func (h *OCIHandler) HandleListTags(c *fiber.Ctx) error {
 func (h *OCIHandler) HandleManifest(c *fiber.Ctx) error {
 	name := h.getName(c)
 	reference := c.Params("reference")
+
+	// Validate inputs to prevent path traversal
+	if err := utils.ValidateRepoName(name); err != nil {
+		h.log.WithField("name", name).Warn("Invalid repository name")
+		return HTTPError(c, 400, "Invalid repository name")
+	}
+	if err := utils.ValidateReference(reference); err != nil {
+		h.log.WithField("reference", reference).Warn("Invalid reference format")
+		return HTTPError(c, 400, "Invalid reference format")
+	}
 
 	h.log.WithFunc().WithFields(logrus.Fields{
 		"name":      name,
@@ -356,6 +383,13 @@ func (h *OCIHandler) PostUpload(c *fiber.Ctx) error {
 
 func (h *OCIHandler) PatchBlob(c *fiber.Ctx) error {
 	uuid := c.Params("uuid")
+
+	// Validate UUID to prevent path traversal
+	if err := utils.ValidateUUID(uuid); err != nil {
+		h.log.WithField("uuid", uuid).Warn("Invalid UUID format")
+		return HTTPError(c, 400, "Invalid UUID format")
+	}
+
 	tempPath := h.pathManager.GetTempPath(uuid)
 
 	h.log.WithFunc().WithFields(logrus.Fields{
@@ -389,6 +423,20 @@ func (h *OCIHandler) CompleteUpload(c *fiber.Ctx) error {
 	uuid := c.Params("uuid")
 	digest := c.Query("digest")
 
+	// Validate all inputs to prevent path traversal
+	if err := utils.ValidateRepoName(name); err != nil {
+		h.log.WithField("name", name).Warn("Invalid repository name")
+		return HTTPError(c, 400, "Invalid repository name")
+	}
+	if err := utils.ValidateUUID(uuid); err != nil {
+		h.log.WithField("uuid", uuid).Warn("Invalid UUID format")
+		return HTTPError(c, 400, "Invalid UUID format")
+	}
+	if err := utils.ValidateDigest(digest); err != nil {
+		h.log.WithField("digest", digest).Warn("Invalid digest format")
+		return HTTPError(c, 400, "Invalid digest format")
+	}
+
 	tempPath := h.pathManager.GetTempPath(uuid)
 	finalPath := h.pathManager.GetBlobPath(digest)
 
@@ -420,6 +468,17 @@ func (h *OCIHandler) CompleteUpload(c *fiber.Ctx) error {
 func (h *OCIHandler) HeadBlob(c *fiber.Ctx) error {
 	digest := c.Params("digest")
 	name := h.getName(c)
+
+	// Validate inputs to prevent path traversal
+	if err := utils.ValidateDigest(digest); err != nil {
+		h.log.WithField("digest", digest).Warn("Invalid digest format")
+		return HTTPError(c, 400, "Invalid digest format")
+	}
+	if err := utils.ValidateRepoName(name); err != nil {
+		h.log.WithField("name", name).Warn("Invalid repository name")
+		return HTTPError(c, 400, "Invalid repository name")
+	}
+
 	blobPath := h.pathManager.GetBlobPath(digest)
 
 	h.log.WithFunc().WithFields(logrus.Fields{
@@ -448,6 +507,16 @@ func (h *OCIHandler) HeadBlob(c *fiber.Ctx) error {
 func (h *OCIHandler) PutManifest(c *fiber.Ctx) error {
 	name := h.getName(c)
 	reference := c.Params("reference")
+
+	// Validate inputs to prevent path traversal
+	if err := utils.ValidateRepoName(name); err != nil {
+		h.log.WithField("name", name).Warn("Invalid repository name")
+		return HTTPError(c, 400, "Invalid repository name")
+	}
+	if err := utils.ValidateReference(reference); err != nil {
+		h.log.WithField("reference", reference).Warn("Invalid reference format")
+		return HTTPError(c, 400, "Invalid reference format")
+	}
 
 	h.log.WithFunc().WithFields(logrus.Fields{
 		"name":      name,

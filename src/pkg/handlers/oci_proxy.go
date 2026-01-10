@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -19,15 +21,16 @@ import (
 
 // proxyBlob fetches a blob from upstream, caches it completely, then serves from cache
 func (h *OCIHandler) proxyBlob(c *fiber.Ctx, name, digest string) error {
-	// Acquire semaphore to limit concurrent downloads (prevents OOM with large images)
-	select {
-	case blobDownloadSemaphore <- struct{}{}:
-		defer func() { <-blobDownloadSemaphore }()
-	case <-c.Context().Done():
-		return c.SendStatus(408) // Request timeout
+	// Check if blob is already cached before doing anything
+	blobPath := h.pathManager.GetBlobPath(digest)
+	if _, err := os.Stat(blobPath); err == nil {
+		h.log.WithField("digest", digest).Debug("Blob already cached, serving from cache")
+		c.Set("Docker-Content-Digest", digest)
+		c.Set("Content-Type", "application/octet-stream")
+		return c.SendFile(blobPath)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
 	registryURL, upstreamName, err := h.proxyService.ResolveRegistry(name)
@@ -40,7 +43,7 @@ func (h *OCIHandler) proxyBlob(c *fiber.Ctx, name, digest string) error {
 		"registry":     registryURL,
 		"upstreamName": upstreamName,
 		"digest":       digest,
-	}).Debug("Fetching blob from upstream (semaphore acquired)")
+	}).Debug("Fetching blob from upstream")
 
 	reader, size, err := h.proxyService.GetBlob(ctx, registryURL, upstreamName, digest)
 	if err != nil {
@@ -49,13 +52,47 @@ func (h *OCIHandler) proxyBlob(c *fiber.Ctx, name, digest string) error {
 	}
 	defer reader.Close()
 
-	blobPath := h.pathManager.GetBlobPath(digest)
+	// Select semaphore based on blob size: small (<100MB) or large (>=100MB)
+	var sem chan struct{}
+	var sizeCategory string
+	if size > 0 && size >= blobSizeThreshold {
+		sem = largeBlobSemaphore
+		sizeCategory = "large"
+	} else {
+		sem = smallBlobSemaphore
+		sizeCategory = "small"
+	}
+
+	// Acquire size-appropriate semaphore
+	select {
+	case sem <- struct{}{}:
+		defer func() { <-sem }()
+	case <-c.Context().Done():
+		return c.SendStatus(408) // Request timeout
+	}
+
+	h.log.WithFields(logrus.Fields{
+		"digest":   digest,
+		"size":     size,
+		"category": sizeCategory,
+	}).Debug("Semaphore acquired for blob download")
+
+	// Double-check after acquiring semaphore (another goroutine may have completed download)
+	if _, err := os.Stat(blobPath); err == nil {
+		h.log.WithField("digest", digest).Debug("Blob cached by another request, serving from cache")
+		c.Set("Docker-Content-Digest", digest)
+		c.Set("Content-Type", "application/octet-stream")
+		return c.SendFile(blobPath)
+	}
+
 	if err := os.MkdirAll(filepath.Dir(blobPath), 0755); err != nil {
 		h.log.WithError(err).Warn("Failed to create blob directory")
 	}
 
-	// Download to temp file first, then rename atomically to prevent corrupted cache
-	tempPath := blobPath + ".tmp"
+	// Download to temp file with unique suffix to prevent concurrent download collisions
+	randBytes := make([]byte, 8)
+	rand.Read(randBytes)
+	tempPath := blobPath + ".tmp." + hex.EncodeToString(randBytes)
 	file, err := os.Create(tempPath)
 	if err != nil {
 		h.log.WithError(err).Warn("Failed to create blob cache file, streaming without caching")
