@@ -19,6 +19,30 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+// calculateBlobTimeout returns a dynamic timeout based on blob size
+// Formula: base + (size_in_gb * per_gb_seconds), capped at max
+func (h *OCIHandler) calculateBlobTimeout(sizeBytes int64) time.Duration {
+	cfg := h.config.Proxy.Timeout
+
+	// Base timeout
+	timeout := time.Duration(cfg.BlobBaseSeconds) * time.Second
+
+	// Add time per GB if size is known
+	if sizeBytes > 0 {
+		sizeGB := float64(sizeBytes) / (1024 * 1024 * 1024)
+		additionalSeconds := int(sizeGB * float64(cfg.BlobPerGBSeconds))
+		timeout += time.Duration(additionalSeconds) * time.Second
+	}
+
+	// Cap at maximum
+	maxTimeout := time.Duration(cfg.MaxTimeoutMinutes) * time.Minute
+	if timeout > maxTimeout {
+		timeout = maxTimeout
+	}
+
+	return timeout
+}
+
 // proxyBlob fetches a blob from upstream, caches it completely, then serves from cache
 func (h *OCIHandler) proxyBlob(c *fiber.Ctx, name, digest string) error {
 	// Check if blob is already cached before doing anything
@@ -29,9 +53,6 @@ func (h *OCIHandler) proxyBlob(c *fiber.Ctx, name, digest string) error {
 		c.Set("Content-Type", "application/octet-stream")
 		return c.SendFile(blobPath)
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
 
 	registryURL, upstreamName, err := h.proxyService.ResolveRegistry(name)
 	if err != nil {
@@ -45,12 +66,26 @@ func (h *OCIHandler) proxyBlob(c *fiber.Ctx, name, digest string) error {
 		"digest":       digest,
 	}).Debug("Fetching blob from upstream")
 
-	reader, size, err := h.proxyService.GetBlob(ctx, registryURL, upstreamName, digest)
+	// Use short timeout for initial connection, then calculate based on size
+	initCtx, initCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	reader, size, err := h.proxyService.GetBlob(initCtx, registryURL, upstreamName, digest)
+	initCancel()
 	if err != nil {
 		h.log.WithError(err).Error("Failed to fetch blob from upstream")
 		return c.SendStatus(502)
 	}
 	defer reader.Close()
+
+	// Calculate dynamic timeout based on blob size
+	timeout := h.calculateBlobTimeout(size)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	h.log.WithFields(logrus.Fields{
+		"digest":  digest,
+		"size":    size,
+		"timeout": timeout.String(),
+	}).Debug("Calculated dynamic timeout for blob download")
 
 	// Select semaphore based on blob size: small (<100MB) or large (>=100MB)
 	var sem chan struct{}
@@ -63,10 +98,13 @@ func (h *OCIHandler) proxyBlob(c *fiber.Ctx, name, digest string) error {
 		sizeCategory = "small"
 	}
 
-	// Acquire size-appropriate semaphore
+	// Acquire size-appropriate semaphore with timeout
 	select {
 	case sem <- struct{}{}:
 		defer func() { <-sem }()
+	case <-ctx.Done():
+		h.log.WithField("digest", digest).Warn("Timeout waiting for semaphore")
+		return c.SendStatus(504) // Gateway timeout
 	case <-c.Context().Done():
 		return c.SendStatus(408) // Request timeout
 	}
@@ -143,7 +181,8 @@ func (h *OCIHandler) proxyBlob(c *fiber.Ctx, name, digest string) error {
 
 // proxyManifest fetches a manifest from upstream and caches it
 func (h *OCIHandler) proxyManifest(c *fiber.Ctx, name, reference string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	manifestTimeout := time.Duration(h.config.Proxy.Timeout.ManifestSeconds) * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), manifestTimeout)
 	defer cancel()
 
 	registryURL, upstreamName, err := h.proxyService.ResolveRegistry(name)
