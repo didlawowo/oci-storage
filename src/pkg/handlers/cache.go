@@ -2,6 +2,7 @@
 package handlers
 
 import (
+	"net/url"
 	"oci-storage/pkg/interfaces"
 	"oci-storage/pkg/utils"
 
@@ -66,8 +67,8 @@ func (h *CacheHandler) ListCachedImages(c *fiber.Ctx) error {
 
 // DeleteCachedImage removes a specific cached image
 func (h *CacheHandler) DeleteCachedImage(c *fiber.Ctx) error {
-	name := c.Params("name")
-	tag := c.Params("tag")
+	name, _ := url.PathUnescape(c.Params("name"))
+	tag, _ := url.PathUnescape(c.Params("tag"))
 
 	h.log.WithFunc().WithField("name", name).WithField("tag", tag).Debug("Deleting cached image")
 
