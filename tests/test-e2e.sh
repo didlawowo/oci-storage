@@ -7,6 +7,12 @@
 # - Authentication
 # - Backup/Restore
 # - Cache management
+#
+# CRITICAL TEST: Large Layer Blob Download
+# This test specifically validates that large blobs (50MB+) are downloaded
+# completely without context cancellation. Small blobs (<10KB like configs)
+# download too fast to detect the context canceled bug, but large layer blobs
+# (100-300MB) will fail if contexts are cancelled prematurely during io.Copy.
 
 set -e
 
@@ -541,7 +547,7 @@ if [ "${SKIP_UPSTREAM_TESTS}" != "1" ]; then
     log_subsection "Second Tag Caching"
     test_endpoint "GET manifest ${TEST_IMAGE}:${TEST_TAG_2}" "GET" "/v2/proxy/docker.io/${TEST_IMAGE}/manifests/${TEST_TAG_2}" "200"
 
-    log_subsection "Blob Proxy"
+    log_subsection "Blob Proxy (Config - Small)"
     # Get a blob digest from the manifest
     if [ -n "$MANIFEST_RESPONSE" ]; then
         # Try to get config digest for blob test
@@ -553,6 +559,117 @@ if [ "${SKIP_UPSTREAM_TESTS}" != "1" ]; then
         else
             log_info "No config digest found in manifest, skipping blob test"
         fi
+    fi
+
+    log_subsection "Blob Proxy (Layer - Large) - CRITICAL TEST"
+    # Extract FIRST LAYER blob (typically 50-300MB) - this tests the context canceled bug
+    if [ -n "$MANIFEST_RESPONSE" ]; then
+        # Try to get first layer digest - parse layers array properly
+        LAYER_DIGEST=$(echo "$MANIFEST_RESPONSE" | grep -o '"layers"[[:space:]]*:[[:space:]]*\[' -A 50 | grep -o '"digest"[[:space:]]*:[[:space:]]*"sha256:[a-f0-9]*"' | head -1 | grep -o 'sha256:[a-f0-9]*')
+        LAYER_SIZE=$(echo "$MANIFEST_RESPONSE" | grep "$LAYER_DIGEST" -A 2 -B 2 | grep -o '"size"[[:space:]]*:[[:space:]]*[0-9]*' | grep -o '[0-9]*' | head -1)
+
+        if [ -n "$LAYER_DIGEST" ]; then
+            LAYER_SIZE_MB=$((LAYER_SIZE / 1024 / 1024))
+            log_info "Testing LARGE layer blob: ${LAYER_DIGEST:0:20}... (${LAYER_SIZE_MB}MB)"
+
+            # Download with extended timeout and capture to temp file to verify completeness
+            DOWNLOAD_FILE="/tmp/test-layer-blob-$$.bin"
+            DOWNLOAD_START=$(date +%s)
+
+            # Use longer timeout for large blobs (10 minutes max)
+            BLOB_CODE=$(curl -s -o "$DOWNLOAD_FILE" -w "%{http_code}" -u "$AUTH" \
+                --max-time 600 \
+                "${PORTAL_URL}/v2/proxy/docker.io/${TEST_IMAGE}/blobs/${LAYER_DIGEST}" 2>/dev/null)
+
+            DOWNLOAD_END=$(date +%s)
+            DOWNLOAD_TIME=$((DOWNLOAD_END - DOWNLOAD_START))
+
+            if [ "$BLOB_CODE" = "200" ]; then
+                log_pass "Large layer blob HTTP 200 (${DOWNLOAD_TIME}s)"
+
+                # Verify downloaded file size matches expected size
+                if [ -f "$DOWNLOAD_FILE" ]; then
+                    # macOS uses stat -f%z, Linux uses stat -c%s
+                    ACTUAL_SIZE=$(stat -f%z "$DOWNLOAD_FILE" 2>/dev/null || stat -c%s "$DOWNLOAD_FILE" 2>/dev/null || echo "0")
+
+                    if [ "$ACTUAL_SIZE" = "$LAYER_SIZE" ]; then
+                        log_pass "Layer blob size verified: ${LAYER_SIZE_MB}MB (no truncation)"
+                    elif [ "$ACTUAL_SIZE" -gt 0 ]; then
+                        ACTUAL_MB=$((ACTUAL_SIZE / 1024 / 1024))
+                        log_fail "Layer blob TRUNCATED! Expected ${LAYER_SIZE_MB}MB, got ${ACTUAL_MB}MB (context canceled?)"
+                    else
+                        log_fail "Layer blob download resulted in empty file (context canceled?)"
+                    fi
+
+                    rm -f "$DOWNLOAD_FILE"
+                else
+                    log_fail "Layer blob download file not created"
+                fi
+
+                # Verify blob is cached on server (wait for cache write to complete)
+                sleep 2
+                CACHE_CHECK=$(curl -s -o /dev/null -w "%{http_code}" -I -u "$AUTH" \
+                    "${PORTAL_URL}/v2/proxy/docker.io/${TEST_IMAGE}/blobs/${LAYER_DIGEST}" 2>/dev/null)
+
+                if [ "$CACHE_CHECK" = "200" ]; then
+                    log_pass "Layer blob is cached (subsequent requests will be fast)"
+                else
+                    log_fail "Layer blob HEAD check failed after download (cache issue?)"
+                fi
+            else
+                log_fail "Large layer blob download failed (HTTP $BLOB_CODE) - this indicates context canceled bug!"
+            fi
+        else
+            log_info "No layer digest found in manifest (single-arch or empty layers?)"
+
+            # If manifest list, try to get layer from first child manifest
+            if echo "$MANIFEST_RESPONSE" | grep -q '"manifests"'; then
+                log_info "Manifest list detected, extracting first child manifest for layer test..."
+                CHILD_DIGEST=$(echo "$MANIFEST_RESPONSE" | grep -o '"digest":"sha256:[a-f0-9]*"' | head -1 | cut -d'"' -f4)
+
+                if [ -n "$CHILD_DIGEST" ]; then
+                    CHILD_MANIFEST=$(curl -s -u "$AUTH" \
+                        "${PORTAL_URL}/v2/proxy/docker.io/${TEST_IMAGE}/manifests/${CHILD_DIGEST}" 2>/dev/null)
+
+                    LAYER_DIGEST=$(echo "$CHILD_MANIFEST" | grep -o '"layers"[[:space:]]*:[[:space:]]*\[' -A 50 | grep -o '"digest"[[:space:]]*:[[:space:]]*"sha256:[a-f0-9]*"' | head -1 | grep -o 'sha256:[a-f0-9]*')
+                    LAYER_SIZE=$(echo "$CHILD_MANIFEST" | grep "$LAYER_DIGEST" -A 2 -B 2 | grep -o '"size"[[:space:]]*:[[:space:]]*[0-9]*' | grep -o '[0-9]*' | head -1)
+
+                    if [ -n "$LAYER_DIGEST" ] && [ -n "$LAYER_SIZE" ]; then
+                        LAYER_SIZE_MB=$((LAYER_SIZE / 1024 / 1024))
+                        log_info "Found layer in child manifest: ${LAYER_DIGEST:0:20}... (${LAYER_SIZE_MB}MB)"
+
+                        # Same download test as above
+                        DOWNLOAD_FILE="/tmp/test-layer-blob-$$.bin"
+                        BLOB_CODE=$(curl -s -o "$DOWNLOAD_FILE" -w "%{http_code}" -u "$AUTH" \
+                            --max-time 600 \
+                            "${PORTAL_URL}/v2/proxy/docker.io/${TEST_IMAGE}/blobs/${LAYER_DIGEST}" 2>/dev/null)
+
+                        if [ "$BLOB_CODE" = "200" ] && [ -f "$DOWNLOAD_FILE" ]; then
+                            ACTUAL_SIZE=$(stat -f%z "$DOWNLOAD_FILE" 2>/dev/null || stat -c%s "$DOWNLOAD_FILE" 2>/dev/null || echo "0")
+
+                            if [ "$ACTUAL_SIZE" = "$LAYER_SIZE" ]; then
+                                log_pass "Child manifest layer blob verified: ${LAYER_SIZE_MB}MB"
+                            else
+                                ACTUAL_MB=$((ACTUAL_SIZE / 1024 / 1024))
+                                log_fail "Child manifest layer blob TRUNCATED! Expected ${LAYER_SIZE_MB}MB, got ${ACTUAL_MB}MB"
+                            fi
+
+                            rm -f "$DOWNLOAD_FILE"
+                        else
+                            log_fail "Child manifest layer blob download failed (HTTP $BLOB_CODE)"
+                        fi
+                    else
+                        log_skip "Could not extract layer from child manifest"
+                    fi
+                else
+                    log_skip "Could not extract child digest from manifest list"
+                fi
+            else
+                log_skip "No layers available for large blob test"
+            fi
+        fi
+    else
+        log_skip "No manifest response available for large blob test"
     fi
 
     log_subsection "Cached Images Verification"

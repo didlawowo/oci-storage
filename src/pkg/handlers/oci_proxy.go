@@ -66,20 +66,21 @@ func (h *OCIHandler) proxyBlob(c *fiber.Ctx, name, digest string) error {
 		"digest":       digest,
 	}).Debug("Fetching blob from upstream")
 
-	// Use short timeout for initial connection, then calculate based on size
-	initCtx, initCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	reader, size, err := h.proxyService.GetBlob(initCtx, registryURL, upstreamName, digest)
-	initCancel()
+	// Calculate dynamic timeout based on estimated blob size (use max timeout for initial fetch)
+	// We use a generous initial timeout to establish connection and get the size header
+	initialTimeout := time.Duration(h.config.Proxy.Timeout.MaxTimeoutMinutes) * time.Minute
+	ctx, cancel := context.WithTimeout(context.Background(), initialTimeout)
+	defer cancel()
+
+	reader, size, err := h.proxyService.GetBlob(ctx, registryURL, upstreamName, digest)
 	if err != nil {
 		h.log.WithError(err).Error("Failed to fetch blob from upstream")
 		return c.SendStatus(502)
 	}
 	defer reader.Close()
 
-	// Calculate dynamic timeout based on blob size
+	// Log the actual size-based timeout that would be calculated
 	timeout := h.calculateBlobTimeout(size)
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
 
 	h.log.WithFields(logrus.Fields{
 		"digest":  digest,

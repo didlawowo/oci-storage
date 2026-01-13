@@ -518,6 +518,12 @@ func (h *OCIHandler) PutManifest(c *fiber.Ctx) error {
 		return HTTPError(c, 400, "Invalid reference format")
 	}
 
+	// Block push to /helm/ - use /charts/ instead
+	if strings.HasPrefix(name, "helm/") {
+		h.log.WithField("name", name).Warn("Push to /helm/ is not allowed, use /charts/ instead")
+		return HTTPError(c, 400, "Push to /helm/ is not allowed. Use /charts/ for Helm charts.")
+	}
+
 	h.log.WithFunc().WithFields(logrus.Fields{
 		"name":      name,
 		"reference": reference,
