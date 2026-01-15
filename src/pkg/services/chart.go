@@ -123,7 +123,7 @@ func (s *ChartService) ExtractChartMetadata(chartData []byte) (*models.ChartMeta
 		}
 	}
 
-	return nil, fmt.Errorf("Chart.yaml not found in chart archive")
+	return nil, fmt.Errorf("chart.yaml not found in chart archive")
 }
 
 // ListCharts returns all available charts grouped by name with their versions

@@ -270,29 +270,6 @@ func TestNestedPath_ProxyManifest(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 }
 
-// Helper to create a mock ReadCloser
-type mockReadCloser struct {
-	data   []byte
-	offset int
-}
-
-func newMockReadCloser(data []byte) *mockReadCloser {
-	return &mockReadCloser{data: data}
-}
-
-func (m *mockReadCloser) Read(p []byte) (n int, err error) {
-	if m.offset >= len(m.data) {
-		return 0, nil
-	}
-	n = copy(p, m.data[m.offset:])
-	m.offset += n
-	return n, nil
-}
-
-func (m *mockReadCloser) Close() error {
-	return nil
-}
-
 func TestMultiArchManifestFlow(t *testing.T) {
 	// This test simulates the full multi-arch manifest flow:
 	// 1. Client requests proxy/docker.io/nginx:alpine (tag)

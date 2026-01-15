@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -75,9 +76,7 @@ func (s *ProxyService) IsEnabled() bool {
 //   - nginx -> default registry, library/nginx image
 func (s *ProxyService) ResolveRegistry(imagePath string) (registryURL string, imageName string, err error) {
 	// Strip "proxy/" prefix if present
-	if strings.HasPrefix(imagePath, "proxy/") {
-		imagePath = strings.TrimPrefix(imagePath, "proxy/")
-	}
+	imagePath = strings.TrimPrefix(imagePath, "proxy/")
 
 	parts := strings.SplitN(imagePath, "/", 2)
 
@@ -337,31 +336,6 @@ func (s *ProxyService) GetCacheState() *models.CacheState {
 	return state
 }
 
-// calculateBlobDiskUsage walks the blobs directory and sums up actual file sizes
-func (s *ProxyService) calculateBlobDiskUsage() int64 {
-	blobsDir := s.pathManager.GetBasePath() + "/blobs"
-	var totalSize int64
-
-	entries, err := os.ReadDir(blobsDir)
-	if err != nil {
-		s.log.WithError(err).Debug("Failed to read blobs directory")
-		return 0
-	}
-
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		info, err := entry.Info()
-		if err != nil {
-			continue
-		}
-		totalSize += info.Size()
-	}
-
-	return totalSize
-}
-
 // GetCachedImages returns all cached images metadata
 func (s *ProxyService) GetCachedImages() ([]models.CachedImageMetadata, error) {
 	s.cacheMutex.RLock()
@@ -497,10 +471,42 @@ func (s *ProxyService) deleteCachedImageFiles(name, tag string) error {
 		s.log.WithError(err).Warn("Failed to delete cache metadata file")
 	}
 
+	// Delete image manifest
+	manifestPath := s.pathManager.GetImageManifestPath(name, tag)
+	if err := os.Remove(manifestPath); err != nil && !os.IsNotExist(err) {
+		s.log.WithError(err).Debug("Failed to delete manifest file")
+	}
+
+	// Delete image tag metadata
+	tagMetadataPath := s.pathManager.GetBasePath() + "/images/" + name + "/tags/" + tag + ".json"
+	if err := os.Remove(tagMetadataPath); err != nil && !os.IsNotExist(err) {
+		s.log.WithError(err).Debug("Failed to delete tag metadata file")
+	}
+
+	// Clean up empty directories
+	imageDir := s.pathManager.GetBasePath() + "/images/" + name
+	s.cleanEmptyDirs(imageDir)
+
 	// Note: We don't delete blobs as they might be shared with other images
 	// A garbage collection process could be added later
 
 	return nil
+}
+
+// cleanEmptyDirs removes empty directories recursively up to images/
+func (s *ProxyService) cleanEmptyDirs(dir string) {
+	imagesBase := s.pathManager.GetBasePath() + "/images"
+
+	for dir != imagesBase && dir != "" {
+		entries, err := os.ReadDir(dir)
+		if err != nil || len(entries) > 0 {
+			break
+		}
+		if err := os.Remove(dir); err != nil {
+			break
+		}
+		dir = filepath.Dir(dir)
+	}
 }
 
 // PurgeAllCache removes all cached images and blobs completely
@@ -516,14 +522,28 @@ func (s *ProxyService) PurgeAllCache() error {
 		s.log.WithError(err).Warn("Failed to delete blobs directory")
 	}
 	// Recreate empty blobs directory
-	os.MkdirAll(blobsDir, 0755)
+	if err := os.MkdirAll(blobsDir, 0755); err != nil {
+		s.log.WithError(err).Warn("Failed to recreate blobs directory")
+	}
 
-	// Delete all image metadata files
-	for _, img := range s.cacheState.Images {
-		metadataPath := s.pathManager.GetCachedImageMetadataPath(img.Name, img.Tag)
-		if err := os.Remove(metadataPath); err != nil && !os.IsNotExist(err) {
-			s.log.WithError(err).Debug("Failed to delete metadata file")
-		}
+	// Delete all images directory (manifests and tags metadata)
+	imagesDir := s.pathManager.GetBasePath() + "/images"
+	if err := os.RemoveAll(imagesDir); err != nil && !os.IsNotExist(err) {
+		s.log.WithError(err).Warn("Failed to delete images directory")
+	}
+	// Recreate empty images directory
+	if err := os.MkdirAll(imagesDir, 0755); err != nil {
+		s.log.WithError(err).Warn("Failed to recreate images directory")
+	}
+
+	// Delete all cache metadata files
+	cacheMetadataDir := s.pathManager.GetBasePath() + "/cache/metadata"
+	if err := os.RemoveAll(cacheMetadataDir); err != nil && !os.IsNotExist(err) {
+		s.log.WithError(err).Warn("Failed to delete cache metadata directory")
+	}
+	// Recreate empty cache metadata directory
+	if err := os.MkdirAll(cacheMetadataDir, 0755); err != nil {
+		s.log.WithError(err).Warn("Failed to recreate cache metadata directory")
 	}
 
 	// Reset cache state

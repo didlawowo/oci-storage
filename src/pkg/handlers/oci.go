@@ -659,7 +659,7 @@ func (h *OCIHandler) handleHelmChartManifest(name, reference string, manifest *m
 	}
 
 	if chartDigest == "" {
-		return fmt.Errorf("Helm chart layer not found in manifest")
+		return fmt.Errorf("helm chart layer not found in manifest")
 	}
 
 	chartData, err := h.getBlobByDigest(chartDigest)

@@ -169,13 +169,13 @@ func (s *BackupService) initAzureClient(accountKey string) error {
 
 	// Vérification des prérequis
 	if s.config.Backup.Azure.StorageAccount == "" {
-		return fmt.Errorf("Azure storage account name is not configured")
+		return fmt.Errorf("azure storage account name is not configured")
 	}
 	if s.config.Backup.Azure.Container == "" {
-		return fmt.Errorf("Azure container name is not configured")
+		return fmt.Errorf("azure container name is not configured")
 	}
 	if accountKey == "" {
-		return fmt.Errorf("Azure storage account key not provided")
+		return fmt.Errorf("azure storage account key not provided")
 	}
 
 	// Création des credentials
@@ -440,5 +440,5 @@ func (s *BackupService) restoreFromAWS() error {
 
 func (s *BackupService) restoreFromAzure() error {
 	s.log.WithFunc().Error("Azure restore not implemented")
-	return fmt.Errorf("Azure restore not implemented")
+	return fmt.Errorf("azure restore not implemented")
 }
