@@ -10,7 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-
+	"sort"
 	"strings"
 
 	"oci-storage/config"
@@ -197,6 +197,33 @@ func (s *ChartService) GetChartDetails(chartName string, version string) (*model
 		return nil, fmt.Errorf("failed to extract metadata: %w", err)
 	}
 	return metadata, nil
+}
+
+// ListChartVersions returns all available versions for a specific chart
+func (s *ChartService) ListChartVersions(chartName string) ([]string, error) {
+	chartsDir := s.pathManager.GetChartsPath()
+	var versions []string
+
+	files, err := os.ReadDir(chartsDir)
+	if err != nil {
+		return nil, err
+	}
+
+	prefix := chartName + "-"
+	for _, file := range files {
+		name := file.Name()
+		if !strings.HasSuffix(name, ".tgz") || !strings.HasPrefix(name, prefix) {
+			continue
+		}
+		// Extract version from filename: chartName-version.tgz
+		version := strings.TrimSuffix(strings.TrimPrefix(name, prefix), ".tgz")
+		versions = append(versions, version)
+	}
+
+	// Sort versions in descending order (newest first)
+	sort.Sort(sort.Reverse(sort.StringSlice(versions)))
+
+	return versions, nil
 }
 
 func (s *ChartService) DeleteChart(chartName string, version string) error {

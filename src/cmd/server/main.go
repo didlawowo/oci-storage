@@ -208,7 +208,7 @@ func main() {
 	// Cache/Proxy management routes
 	app.Get("/cache/status", cacheHandler.GetCacheStatus)
 	app.Get("/cache/images", cacheHandler.ListCachedImages)
-	app.Delete("/cache/image/:name+/:tag", cacheHandler.DeleteCachedImage)
+	app.Delete("/cache/image/*", cacheHandler.DeleteCachedImageWildcard)
 	app.Post("/cache/purge", cacheHandler.PurgeCache)
 
 	// Routes OCI - support nested paths like charts/myapp or images/myapp

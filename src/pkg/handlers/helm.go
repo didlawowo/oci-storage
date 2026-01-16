@@ -237,6 +237,13 @@ func (h *HelmHandler) DisplayChartDetails(c *fiber.Ctx) error {
 		valuesContent = "No values.yaml found"
 	}
 
+	// Get all available versions for this chart
+	versions, err := h.service.ListChartVersions(name)
+	if err != nil {
+		h.log.WithFunc().WithError(err).Debug("Failed to list chart versions")
+		versions = []string{version}
+	}
+
 	chartDetails := fiber.Map{
 		"Name":         chart.Name,
 		"Version":      chart.Version,
@@ -248,7 +255,8 @@ func (h *HelmHandler) DisplayChartDetails(c *fiber.Ctx) error {
 	}
 
 	return c.Render("details", fiber.Map{
-		"Chart": chartDetails,
-		"Title": "Chart Details - " + chart.Name,
+		"Chart":    chartDetails,
+		"Title":    "Chart Details - " + chart.Name,
+		"Versions": versions,
 	})
 }

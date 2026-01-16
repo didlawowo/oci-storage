@@ -86,17 +86,8 @@
                                 </a>
                                 {{end}}
                             </h2>
-                            {{if gt (len .Versions) 1}}
-                            <select class="mt-2 text-sm border rounded p-1"
-                                onchange="switchVersion('{{.Name}}', this.value)">
-                                {{range .Versions}}
-                                <option value="{{.Version}}">Version: {{.Version}}</option>
-                                {{end}}
-                            </select>
-                            {{else}}
                             {{with index .Versions 0}}
                             <p class="mt-2 text-sm text-gray-600">Version: {{.Version}}</p>
-                            {{end}}
                             {{end}}
                         </div>
                         <div class="flex gap-2">

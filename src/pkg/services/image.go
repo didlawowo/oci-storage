@@ -238,6 +238,14 @@ func (s *ImageService) DeleteImage(name, tag string) error {
 	manifestPath := s.getManifestPath(name, tag)
 	metadataPath := s.getMetadataPath(name, tag)
 
+	// Check if manifest exists first
+	if _, err := os.Stat(manifestPath); os.IsNotExist(err) {
+		// Also check metadata path
+		if _, err := os.Stat(metadataPath); os.IsNotExist(err) {
+			return fmt.Errorf("image not found: %s:%s", name, tag)
+		}
+	}
+
 	// Remove manifest
 	if err := os.Remove(manifestPath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to delete manifest: %w", err)
