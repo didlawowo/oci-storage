@@ -234,7 +234,14 @@ func (h *ImageHandler) displayImageDetailsInternal(c *fiber.Ctx, name, tag strin
 		if h.proxyService != nil && h.proxyService.IsEnabled() {
 			cachedImages, cacheErr := h.proxyService.GetCachedImages()
 			if cacheErr == nil {
+				h.log.WithFunc().WithField("cachedCount", len(cachedImages)).Debug("Searching proxy cache")
 				for _, cached := range cachedImages {
+					h.log.WithFunc().WithFields(logrus.Fields{
+						"cachedName": cached.Name,
+						"cachedTag":  cached.Tag,
+						"matchName":  cached.Name == name,
+						"matchTag":   cached.Tag == tag,
+					}).Debug("Comparing cached image")
 					if cached.Name == name && cached.Tag == tag {
 						// Found in proxy cache - convert to ImageMetadata
 						metadata = &models.ImageMetadata{
@@ -251,7 +258,10 @@ func (h *ImageHandler) displayImageDetailsInternal(c *fiber.Ctx, name, tag strin
 			}
 		}
 		if metadata == nil {
-			h.log.WithFunc().WithError(err).Error("Image not found")
+			h.log.WithFunc().WithFields(logrus.Fields{
+				"name": name,
+				"tag":  tag,
+			}).Warn("Image not found in local storage or proxy cache")
 			return HTTPError(c, 404, "Image not found")
 		}
 	}
@@ -282,6 +292,22 @@ func (h *ImageHandler) deleteImageInternal(c *fiber.Ctx, name, tag string) error
 		"tag":  tag,
 	}).Debug("Deleting image")
 
+	isProxyImage := strings.HasPrefix(name, "proxy/")
+
+	// For proxy images, use proxy service which handles both cache state AND files
+	if isProxyImage && h.proxyService != nil && h.proxyService.IsEnabled() {
+		if err := h.proxyService.DeleteCachedImage(name, tag); err != nil {
+			h.log.WithFunc().WithError(err).Error("Failed to delete cached image")
+			return HTTPError(c, 500, "Failed to delete image")
+		}
+		return c.JSON(fiber.Map{
+			"message": "Cached image deleted successfully",
+			"name":    name,
+			"tag":     tag,
+		})
+	}
+
+	// For non-proxy images, use standard image service
 	if err := h.service.DeleteImage(name, tag); err != nil {
 		h.log.WithFunc().WithError(err).Error("Failed to delete image")
 		return HTTPError(c, 500, "Failed to delete image")

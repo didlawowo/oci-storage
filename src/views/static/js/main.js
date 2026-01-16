@@ -254,17 +254,22 @@ function showTab(tab) {
   const imagesSection = document.getElementById("imagesSection");
   const chartsTab = document.getElementById("chartsTab");
   const imagesTab = document.getElementById("imagesTab");
+  const uploadForm = document.getElementById("uploadForm");
 
   if (tab === "charts") {
     chartsSection.style.display = "block";
     imagesSection.style.display = "none";
     chartsTab.classList.add("active", "bg-blue-700");
     imagesTab.classList.remove("active", "bg-blue-700");
+    // Show upload form only on charts tab
+    if (uploadForm) uploadForm.style.display = "flex";
   } else {
     chartsSection.style.display = "none";
     imagesSection.style.display = "block";
     chartsTab.classList.remove("active", "bg-blue-700");
     imagesTab.classList.add("active", "bg-blue-700");
+    // Hide upload form on images tab
+    if (uploadForm) uploadForm.style.display = "none";
     // Load images and cache status when switching to images tab
     loadDockerImages();
     loadCacheStatus();
@@ -519,6 +524,8 @@ function setViewMode(mode) {
 
 /**
  * Deduplicate images by digest - group images with same digest together
+ * IMPORTANT: Pushed and proxy images are kept separate even if they have the same digest
+ * to avoid conflicts when deleting (different delete handlers are used)
  * @param {Array} images - Array of image metadata objects
  * @returns {Array} Deduplicated array with combined tags
  */
@@ -527,14 +534,20 @@ function deduplicateByDigest(images) {
 
   for (const img of images) {
     const digest = img.digest;
+    const isPushed = img.isPushed === true;
+
     if (!digest) {
       // No digest - keep as separate entry with unique key
       digestMap.set(`no-digest-${img.name}-${img.tag}`, { ...img, allTags: [img.tag], allNames: [img.name] });
       continue;
     }
 
-    if (digestMap.has(digest)) {
-      const existing = digestMap.get(digest);
+    // Use composite key: digest + source type (pushed vs proxy)
+    // This prevents merging pushed and proxy images which use different delete handlers
+    const key = `${digest}-${isPushed ? 'pushed' : 'proxy'}`;
+
+    if (digestMap.has(key)) {
+      const existing = digestMap.get(key);
       // Add tag if not already present
       const tagKey = `${img.name}:${img.tag}`;
       const existingTagKey = `${existing.name}:${existing.tag}`;
@@ -554,13 +567,8 @@ function deduplicateByDigest(images) {
         existing.cachedAt = img.cachedAt;
         existing.created = img.created;
       }
-      // Prefer pushed over proxy
-      if (img.isPushed && !existing.isPushed) {
-        existing.isPushed = true;
-        existing.sourceRegistry = img.sourceRegistry;
-      }
     } else {
-      digestMap.set(digest, { ...img, allTags: [img.tag], allNames: [img.name] });
+      digestMap.set(key, { ...img, allTags: [img.tag], allNames: [img.name] });
     }
   }
 
@@ -889,7 +897,10 @@ async function deleteCachedImage(name, tag) {
   }
 
   try {
-    const response = await fetch(`/cache/image/${encodeURIComponent(name)}/${encodeURIComponent(tag)}`, {
+    // Don't encode slashes in name - Fiber's :name+ route expects literal slashes
+    // Only encode special characters that could break the URL
+    const encodedName = name.split('/').map(segment => encodeURIComponent(segment)).join('/');
+    const response = await fetch(`/cache/image/${encodedName}/${encodeURIComponent(tag)}`, {
       method: "DELETE",
     });
 

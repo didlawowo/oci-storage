@@ -30,6 +30,10 @@ TEST_IMAGE="${TEST_IMAGE:-traefik}"
 TEST_TAG="${TEST_TAG:-latest}"
 TEST_TAG_2="${TEST_TAG_2:-v3.2}"
 
+# Multi-arch test image (python:alpine - small and multi-arch: amd64, arm64, etc.)
+MULTIARCH_IMAGE="${MULTIARCH_IMAGE:-python}"
+MULTIARCH_TAG="${MULTIARCH_TAG:-3.12-alpine}"
+
 # Set to 1 to keep test data after tests (useful for UI verification)
 KEEP_TEST_DATA="${KEEP_TEST_DATA:-0}"
 
@@ -155,6 +159,7 @@ echo ""
 log_info "Portal URL: $PORTAL_URL"
 log_info "Portal Host: $PORTAL_HOST"
 log_info "Test images: docker.io/${TEST_IMAGE}:${TEST_TAG}, docker.io/${TEST_IMAGE}:${TEST_TAG_2}"
+log_info "Multi-arch image: docker.io/${MULTIARCH_IMAGE}:${MULTIARCH_TAG}"
 log_info "Test charts: my-chart (0.1.0, 0.1.1), my-second-chart (0.1.0, 0.2.0)"
 echo ""
 
@@ -233,6 +238,9 @@ for tag in "$TEST_TAG" "$TEST_TAG_2"; do
     curl -s -X DELETE -u "$AUTH" "${PORTAL_URL}/image/proxy/docker.io/${TEST_IMAGE}/${tag}" 2>/dev/null || true
     curl -s -X DELETE -u "$AUTH" "${PORTAL_URL}/image/proxy/docker.io/library/${TEST_IMAGE}/${tag}" 2>/dev/null || true
 done
+# Clean multi-arch test image
+curl -s -X DELETE -u "$AUTH" "${PORTAL_URL}/image/proxy/docker.io/${MULTIARCH_IMAGE}/${MULTIARCH_TAG}" 2>/dev/null || true
+curl -s -X DELETE -u "$AUTH" "${PORTAL_URL}/image/proxy/docker.io/library/${MULTIARCH_IMAGE}/${MULTIARCH_TAG}" 2>/dev/null || true
 log_pass "Previous test data cleaned"
 
 # ============================================
@@ -517,11 +525,11 @@ if [ "${SKIP_UPSTREAM_TESTS}" != "1" ]; then
         log_pass "GET manifest ${TEST_IMAGE}:${TEST_TAG} (HTTP 200)"
 
         # Check if multi-arch
-        if echo "$MANIFEST_RESPONSE" | grep -q '"manifests"'; then
+        if echo "$MANIFEST_RESPONSE" | jq -e '.manifests' >/dev/null 2>&1; then
             log_pass "Multi-arch manifest detected"
 
-            # Extract and test child manifest
-            CHILD_DIGEST=$(echo "$MANIFEST_RESPONSE" | grep -o '"digest":"sha256:[a-f0-9]*"' | head -1 | cut -d'"' -f4)
+            # Extract and test child manifest using jq for reliable parsing
+            CHILD_DIGEST=$(echo "$MANIFEST_RESPONSE" | jq -r '.manifests[0].digest // empty' 2>/dev/null)
             if [ -n "$CHILD_DIGEST" ]; then
                 log_info "Testing child manifest: ${CHILD_DIGEST:0:20}..."
 
@@ -550,8 +558,8 @@ if [ "${SKIP_UPSTREAM_TESTS}" != "1" ]; then
     log_subsection "Blob Proxy (Config - Small)"
     # Get a blob digest from the manifest
     if [ -n "$MANIFEST_RESPONSE" ]; then
-        # Try to get config digest for blob test
-        CONFIG_DIGEST=$(echo "$MANIFEST_RESPONSE" | grep -o '"config"[^}]*"digest":"sha256:[a-f0-9]*"' | grep -o 'sha256:[a-f0-9]*' | head -1)
+        # Try to get config digest for blob test using jq
+        CONFIG_DIGEST=$(echo "$MANIFEST_RESPONSE" | jq -r '.config.digest // empty' 2>/dev/null)
         if [ -n "$CONFIG_DIGEST" ]; then
             log_info "Testing blob proxy with config: ${CONFIG_DIGEST:0:20}..."
             test_endpoint "GET blob via proxy" "GET" "/v2/proxy/docker.io/${TEST_IMAGE}/blobs/${CONFIG_DIGEST}" "200"
@@ -564,9 +572,9 @@ if [ "${SKIP_UPSTREAM_TESTS}" != "1" ]; then
     log_subsection "Blob Proxy (Layer - Large) - CRITICAL TEST"
     # Extract FIRST LAYER blob (typically 50-300MB) - this tests the context canceled bug
     if [ -n "$MANIFEST_RESPONSE" ]; then
-        # Try to get first layer digest - parse layers array properly
-        LAYER_DIGEST=$(echo "$MANIFEST_RESPONSE" | grep -o '"layers"[[:space:]]*:[[:space:]]*\[' -A 50 | grep -o '"digest"[[:space:]]*:[[:space:]]*"sha256:[a-f0-9]*"' | head -1 | grep -o 'sha256:[a-f0-9]*')
-        LAYER_SIZE=$(echo "$MANIFEST_RESPONSE" | grep "$LAYER_DIGEST" -A 2 -B 2 | grep -o '"size"[[:space:]]*:[[:space:]]*[0-9]*' | grep -o '[0-9]*' | head -1)
+        # Try to get first layer digest - use jq for reliable cross-platform parsing
+        LAYER_DIGEST=$(echo "$MANIFEST_RESPONSE" | jq -r '.layers[0].digest // empty' 2>/dev/null)
+        LAYER_SIZE=$(echo "$MANIFEST_RESPONSE" | jq -r '.layers[0].size // empty' 2>/dev/null)
 
         if [ -n "$LAYER_DIGEST" ]; then
             LAYER_SIZE_MB=$((LAYER_SIZE / 1024 / 1024))
@@ -623,16 +631,17 @@ if [ "${SKIP_UPSTREAM_TESTS}" != "1" ]; then
             log_info "No layer digest found in manifest (single-arch or empty layers?)"
 
             # If manifest list, try to get layer from first child manifest
-            if echo "$MANIFEST_RESPONSE" | grep -q '"manifests"'; then
+            if echo "$MANIFEST_RESPONSE" | jq -e '.manifests' >/dev/null 2>&1; then
                 log_info "Manifest list detected, extracting first child manifest for layer test..."
-                CHILD_DIGEST=$(echo "$MANIFEST_RESPONSE" | grep -o '"digest":"sha256:[a-f0-9]*"' | head -1 | cut -d'"' -f4)
+                CHILD_DIGEST=$(echo "$MANIFEST_RESPONSE" | jq -r '.manifests[0].digest // empty' 2>/dev/null)
 
                 if [ -n "$CHILD_DIGEST" ]; then
                     CHILD_MANIFEST=$(curl -s -u "$AUTH" \
                         "${PORTAL_URL}/v2/proxy/docker.io/${TEST_IMAGE}/manifests/${CHILD_DIGEST}" 2>/dev/null)
 
-                    LAYER_DIGEST=$(echo "$CHILD_MANIFEST" | grep -o '"layers"[[:space:]]*:[[:space:]]*\[' -A 50 | grep -o '"digest"[[:space:]]*:[[:space:]]*"sha256:[a-f0-9]*"' | head -1 | grep -o 'sha256:[a-f0-9]*')
-                    LAYER_SIZE=$(echo "$CHILD_MANIFEST" | grep "$LAYER_DIGEST" -A 2 -B 2 | grep -o '"size"[[:space:]]*:[[:space:]]*[0-9]*' | grep -o '[0-9]*' | head -1)
+                    # Use jq for reliable cross-platform JSON parsing
+                    LAYER_DIGEST=$(echo "$CHILD_MANIFEST" | jq -r '.layers[0].digest // empty' 2>/dev/null)
+                    LAYER_SIZE=$(echo "$CHILD_MANIFEST" | jq -r '.layers[0].size // empty' 2>/dev/null)
 
                     if [ -n "$LAYER_DIGEST" ] && [ -n "$LAYER_SIZE" ]; then
                         LAYER_SIZE_MB=$((LAYER_SIZE / 1024 / 1024))
@@ -716,6 +725,155 @@ if [ "${SKIP_UPSTREAM_TESTS}" != "1" ]; then
     fi
 else
     log_skip "Upstream proxy tests (SKIP_UPSTREAM_TESTS=1)"
+fi
+
+# ============================================
+# MULTI-ARCH IMAGE TESTS (python:alpine)
+# ============================================
+log_section "Multi-Arch Image Tests (${MULTIARCH_IMAGE}:${MULTIARCH_TAG})"
+
+if [ "${SKIP_UPSTREAM_TESTS}" != "1" ]; then
+    log_subsection "Multi-Arch Manifest List Proxy"
+
+    # Fetch multi-arch manifest list
+    MULTIARCH_MANIFEST=$(curl -s -u "$AUTH" \
+        -H "Accept: application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.index.v1+json" \
+        "${PORTAL_URL}/v2/proxy/docker.io/${MULTIARCH_IMAGE}/manifests/${MULTIARCH_TAG}" 2>/dev/null)
+    MULTIARCH_CODE=$(curl -s -o /dev/null -w "%{http_code}" -u "$AUTH" \
+        -H "Accept: application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.index.v1+json" \
+        "${PORTAL_URL}/v2/proxy/docker.io/${MULTIARCH_IMAGE}/manifests/${MULTIARCH_TAG}" 2>/dev/null)
+
+    if [ "$MULTIARCH_CODE" = "200" ]; then
+        log_pass "GET multi-arch manifest ${MULTIARCH_IMAGE}:${MULTIARCH_TAG} (HTTP 200)"
+
+        # Verify it's a manifest list
+        if echo "$MULTIARCH_MANIFEST" | jq -e '.manifests' >/dev/null 2>&1; then
+            PLATFORM_COUNT=$(echo "$MULTIARCH_MANIFEST" | jq -r '.manifests | length' 2>/dev/null)
+            log_pass "Manifest list contains $PLATFORM_COUNT platforms"
+
+            # List available platforms
+            PLATFORMS=$(echo "$MULTIARCH_MANIFEST" | jq -r '.manifests[] | "\(.platform.os)/\(.platform.architecture)"' 2>/dev/null | tr '\n' ', ' | sed 's/,$//')
+            log_info "Available platforms: $PLATFORMS"
+
+            # Test fetching specific platform manifests (amd64 and arm64)
+            log_subsection "Platform-Specific Manifest Fetch"
+
+            # Get linux/amd64 manifest digest
+            AMD64_DIGEST=$(echo "$MULTIARCH_MANIFEST" | jq -r '.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64") | .digest' 2>/dev/null | head -1)
+            if [ -n "$AMD64_DIGEST" ]; then
+                log_info "Testing linux/amd64 manifest: ${AMD64_DIGEST:0:20}..."
+
+                AMD64_CODE=$(curl -s -o /dev/null -w "%{http_code}" -u "$AUTH" \
+                    "${PORTAL_URL}/v2/proxy/docker.io/${MULTIARCH_IMAGE}/manifests/${AMD64_DIGEST}" 2>/dev/null)
+
+                if [ "$AMD64_CODE" = "200" ]; then
+                    log_pass "linux/amd64 platform manifest fetch (HTTP 200)"
+
+                    # Fetch the manifest content to verify layers
+                    AMD64_MANIFEST=$(curl -s -u "$AUTH" \
+                        "${PORTAL_URL}/v2/proxy/docker.io/${MULTIARCH_IMAGE}/manifests/${AMD64_DIGEST}" 2>/dev/null)
+
+                    AMD64_LAYERS=$(echo "$AMD64_MANIFEST" | jq -r '.layers | length' 2>/dev/null)
+                    AMD64_CONFIG=$(echo "$AMD64_MANIFEST" | jq -r '.config.digest // empty' 2>/dev/null)
+
+                    if [ -n "$AMD64_LAYERS" ] && [ "$AMD64_LAYERS" -gt 0 ]; then
+                        log_pass "linux/amd64 manifest has $AMD64_LAYERS layers"
+                    else
+                        log_fail "linux/amd64 manifest has no layers"
+                    fi
+
+                    if [ -n "$AMD64_CONFIG" ]; then
+                        log_pass "linux/amd64 manifest has config: ${AMD64_CONFIG:0:20}..."
+                    fi
+                else
+                    log_fail "linux/amd64 platform manifest fetch - got HTTP $AMD64_CODE"
+                fi
+            else
+                log_skip "No linux/amd64 platform in manifest list"
+            fi
+
+            # Get linux/arm64 manifest digest
+            ARM64_DIGEST=$(echo "$MULTIARCH_MANIFEST" | jq -r '.manifests[] | select(.platform.os == "linux" and .platform.architecture == "arm64") | .digest' 2>/dev/null | head -1)
+            if [ -n "$ARM64_DIGEST" ]; then
+                log_info "Testing linux/arm64 manifest: ${ARM64_DIGEST:0:20}..."
+
+                ARM64_CODE=$(curl -s -o /dev/null -w "%{http_code}" -u "$AUTH" \
+                    "${PORTAL_URL}/v2/proxy/docker.io/${MULTIARCH_IMAGE}/manifests/${ARM64_DIGEST}" 2>/dev/null)
+
+                if [ "$ARM64_CODE" = "200" ]; then
+                    log_pass "linux/arm64 platform manifest fetch (HTTP 200)"
+                else
+                    log_fail "linux/arm64 platform manifest fetch - got HTTP $ARM64_CODE"
+                fi
+            else
+                log_skip "No linux/arm64 platform in manifest list"
+            fi
+
+            # Test blob from multi-arch image (first layer of amd64)
+            log_subsection "Multi-Arch Blob Proxy"
+
+            if [ -n "$AMD64_MANIFEST" ]; then
+                MULTIARCH_LAYER_DIGEST=$(echo "$AMD64_MANIFEST" | jq -r '.layers[0].digest // empty' 2>/dev/null)
+                MULTIARCH_LAYER_SIZE=$(echo "$AMD64_MANIFEST" | jq -r '.layers[0].size // empty' 2>/dev/null)
+
+                if [ -n "$MULTIARCH_LAYER_DIGEST" ] && [ -n "$MULTIARCH_LAYER_SIZE" ]; then
+                    MULTIARCH_LAYER_MB=$((MULTIARCH_LAYER_SIZE / 1024 / 1024))
+                    log_info "Testing multi-arch layer blob: ${MULTIARCH_LAYER_DIGEST:0:20}... (${MULTIARCH_LAYER_MB}MB)"
+
+                    # Download blob with verification
+                    MULTIARCH_BLOB_FILE="/tmp/test-multiarch-blob-$$.bin"
+                    MULTIARCH_BLOB_CODE=$(curl -s -o "$MULTIARCH_BLOB_FILE" -w "%{http_code}" -u "$AUTH" \
+                        --max-time 300 \
+                        "${PORTAL_URL}/v2/proxy/docker.io/${MULTIARCH_IMAGE}/blobs/${MULTIARCH_LAYER_DIGEST}" 2>/dev/null)
+
+                    if [ "$MULTIARCH_BLOB_CODE" = "200" ]; then
+                        log_pass "Multi-arch layer blob download (HTTP 200)"
+
+                        if [ -f "$MULTIARCH_BLOB_FILE" ]; then
+                            ACTUAL_SIZE=$(stat -f%z "$MULTIARCH_BLOB_FILE" 2>/dev/null || stat -c%s "$MULTIARCH_BLOB_FILE" 2>/dev/null || echo "0")
+
+                            if [ "$ACTUAL_SIZE" = "$MULTIARCH_LAYER_SIZE" ]; then
+                                log_pass "Multi-arch blob size verified: ${MULTIARCH_LAYER_MB}MB"
+                            else
+                                ACTUAL_MB=$((ACTUAL_SIZE / 1024 / 1024))
+                                log_fail "Multi-arch blob size mismatch: expected ${MULTIARCH_LAYER_MB}MB, got ${ACTUAL_MB}MB"
+                            fi
+
+                            rm -f "$MULTIARCH_BLOB_FILE"
+                        fi
+                    else
+                        log_fail "Multi-arch layer blob download - got HTTP $MULTIARCH_BLOB_CODE"
+                    fi
+                else
+                    log_skip "Could not extract layer from amd64 manifest"
+                fi
+            fi
+
+            # Verify multi-arch image appears in cache
+            log_subsection "Multi-Arch Cache Verification"
+            sleep 1  # Allow cache write to complete
+
+            CACHE_CHECK=$(curl -s -u "$AUTH" "${PORTAL_URL}/cache/images" 2>/dev/null)
+            if echo "$CACHE_CHECK" | grep -q "${MULTIARCH_IMAGE}"; then
+                log_pass "Multi-arch image appears in cache list"
+            else
+                log_fail "Multi-arch image not found in cache list"
+            fi
+
+        else
+            log_fail "Response is not a manifest list (missing 'manifests' field)"
+        fi
+    else
+        log_fail "GET multi-arch manifest - got HTTP $MULTIARCH_CODE"
+    fi
+
+    # Cleanup multi-arch test image
+    log_subsection "Multi-Arch Cleanup"
+    curl -s -X DELETE -u "$AUTH" "${PORTAL_URL}/image/proxy/docker.io/${MULTIARCH_IMAGE}/${MULTIARCH_TAG}" 2>/dev/null || true
+    curl -s -X DELETE -u "$AUTH" "${PORTAL_URL}/image/proxy/docker.io/library/${MULTIARCH_IMAGE}/${MULTIARCH_TAG}" 2>/dev/null || true
+    log_pass "Multi-arch test image cleaned up"
+else
+    log_skip "Multi-arch tests (SKIP_UPSTREAM_TESTS=1)"
 fi
 
 # ============================================

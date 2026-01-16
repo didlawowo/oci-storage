@@ -3,6 +3,8 @@ package handlers
 
 import (
 	"net/url"
+	"strings"
+
 	"oci-storage/pkg/interfaces"
 	"oci-storage/pkg/utils"
 
@@ -103,5 +105,37 @@ func (h *CacheHandler) PurgeCache(c *fiber.Ctx) error {
 
 	return c.JSON(fiber.Map{
 		"message": "Cache purged",
+	})
+}
+
+// DeleteCachedImageWildcard handles DELETE /cache/image/* with wildcard path parsing
+// Path format: /cache/image/proxy/docker.io/traefik/v3.2 -> name=proxy/docker.io/traefik, tag=v3.2
+func (h *CacheHandler) DeleteCachedImageWildcard(c *fiber.Ctx) error {
+	path := c.Params("*")
+
+	// Split to get name and tag - tag is the last segment
+	lastSlash := strings.LastIndex(path, "/")
+	if lastSlash == -1 {
+		return HTTPError(c, 400, "Invalid image path format - expected name/tag")
+	}
+
+	name, _ := url.PathUnescape(path[:lastSlash])
+	tag, _ := url.PathUnescape(path[lastSlash+1:])
+
+	h.log.WithFunc().WithField("name", name).WithField("tag", tag).Debug("Deleting cached image (wildcard)")
+
+	if h.proxyService == nil || !h.proxyService.IsEnabled() {
+		return HTTPError(c, 400, "Proxy not enabled")
+	}
+
+	if err := h.proxyService.DeleteCachedImage(name, tag); err != nil {
+		h.log.WithFunc().WithError(err).Error("Failed to delete cached image")
+		return HTTPError(c, 500, err.Error())
+	}
+
+	return c.JSON(fiber.Map{
+		"message": "Cached image deleted",
+		"name":    name,
+		"tag":     tag,
 	})
 }

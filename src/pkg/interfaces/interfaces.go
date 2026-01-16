@@ -11,6 +11,7 @@ import (
 type ChartServiceInterface interface {
 	SaveChart(data []byte, filename string) error
 	ListCharts() ([]models.ChartGroup, error)
+	ListChartVersions(name string) ([]string, error)
 	ChartExists(name, version string) bool
 	GetChart(name, version string) ([]byte, error)
 	GetChartDetails(name, version string) (*models.ChartMetadata, error)
