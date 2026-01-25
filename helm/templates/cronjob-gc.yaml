@@ -2,10 +2,10 @@
 apiVersion: batch/v1
 kind: CronJob
 metadata:
-  name: {{ include "oci-storage.fullname" . }}-gc
+  name: {{ include "application.name" . }}-gc
   namespace: {{ .Values.namespace }}
   labels:
-    {{- include "oci-storage.labels" . | nindent 4 }}
+    {{- include "application.labels" . | nindent 4 }}
     app.kubernetes.io/component: gc
 spec:
   schedule: {{ .Values.gc.schedule | quote }}
@@ -17,7 +17,7 @@ spec:
       template:
         metadata:
           labels:
-            {{- include "oci-storage.selectorLabels" . | nindent 12 }}
+            {{- include "application.selectorLabels" . | nindent 12 }}
             app.kubernetes.io/component: gc
         spec:
           restartPolicy: OnFailure
@@ -34,7 +34,7 @@ spec:
                     {{- if .Values.gc.auth.enabled }}
                     -u "{{ .Values.gc.auth.username }}:{{ .Values.gc.auth.password }}" \
                     {{- end }}
-                    "http://{{ include "oci-storage.fullname" . }}.{{ .Values.namespace }}.svc:{{ .Values.service.port }}/gc{{ if .Values.gc.dryRun }}?dryRun=true{{ end }}")
+                    "http://{{ include "application.name" . }}.{{ .Values.namespace }}.svc:{{ .Values.service.port }}/gc{{ if .Values.gc.dryRun }}?dryRun=true{{ end }}")
                   HTTP_CODE=$(echo "$RESPONSE" | tail -1)
                   BODY=$(echo "$RESPONSE" | head -n -1)
                   echo "Response: $BODY"
