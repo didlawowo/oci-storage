@@ -233,14 +233,9 @@ for chart_name in my-chart my-second-chart; do
     done
 done
 
-log_info "Removing any cached proxy images..."
-for tag in "$TEST_TAG" "$TEST_TAG_2"; do
-    curl -s -X DELETE -u "$AUTH" "${PORTAL_URL}/image/proxy/docker.io/${TEST_IMAGE}/${tag}" 2>/dev/null || true
-    curl -s -X DELETE -u "$AUTH" "${PORTAL_URL}/image/proxy/docker.io/library/${TEST_IMAGE}/${tag}" 2>/dev/null || true
-done
-# Clean multi-arch test image
-curl -s -X DELETE -u "$AUTH" "${PORTAL_URL}/image/proxy/docker.io/${MULTIARCH_IMAGE}/${MULTIARCH_TAG}" 2>/dev/null || true
-curl -s -X DELETE -u "$AUTH" "${PORTAL_URL}/image/proxy/docker.io/library/${MULTIARCH_IMAGE}/${MULTIARCH_TAG}" 2>/dev/null || true
+# Note: Don't delete cached proxy images - they should persist between tests
+# Deleting them forces re-fetch from Docker Hub which may be rate-limited
+# The proxy cache is designed to be reused across runs
 log_pass "Previous test data cleaned"
 
 # ============================================
@@ -473,6 +468,53 @@ else
 fi
 
 # ============================================
+# DOCKER IMAGE PUSH (using crane or skopeo)
+# ============================================
+log_section "Docker Image Push"
+
+# Skip image push tests by default (requires insecure registry config or crane)
+# Set SKIP_IMAGE_PUSH_TESTS=0 to enable
+if [ "${SKIP_IMAGE_PUSH_TESTS:-1}" = "0" ]; then
+    if command -v crane &> /dev/null; then
+        log_subsection "Push Alpine Image (crane)"
+
+        # Authenticate crane to local registry
+        echo "${AUTH_PASS}" | crane auth login ${PORTAL_HOST} -u ${AUTH_USER} --password-stdin --insecure 2>/dev/null
+
+        # Copy alpine:latest from Docker Hub to local registry
+        CRANE_OUTPUT=$(crane copy --insecure docker.io/library/alpine:latest ${PORTAL_HOST}/test-alpine:v1.0 2>&1)
+
+        if [ $? -eq 0 ]; then
+            log_pass "Crane push alpine:latest → test-alpine:v1.0"
+
+            # Verify image appears in /images list
+            sleep 1
+            IMAGES_LIST=$(curl -s -u "$AUTH" "${PORTAL_URL}/images" 2>/dev/null)
+            if echo "$IMAGES_LIST" | grep -q "test-alpine"; then
+                log_pass "Pushed image appears in /images list"
+            else
+                log_fail "Pushed image not in /images list"
+            fi
+
+            # Verify image details endpoint
+            DETAILS_CODE=$(curl -s -o /dev/null -w "%{http_code}" -u "$AUTH" \
+                "${PORTAL_URL}/image/test-alpine/v1.0/details" 2>/dev/null)
+            if [ "$DETAILS_CODE" = "200" ]; then
+                log_pass "Image details endpoint (HTTP 200)"
+            else
+                log_fail "Image details endpoint - got HTTP $DETAILS_CODE"
+            fi
+        else
+            log_fail "Crane push failed: $CRANE_OUTPUT"
+        fi
+    else
+        log_skip "Crane not installed - skipping Docker image push tests (install with: brew install crane)"
+    fi
+else
+    log_skip "Docker image push tests (set SKIP_IMAGE_PUSH_TESTS=0 to enable)"
+fi
+
+# ============================================
 # OCI CATALOG AND TAGS
 # ============================================
 log_section "OCI Catalog and Tags"
@@ -516,6 +558,9 @@ fi
 log_section "Proxy Tests (Docker Hub Caching)"
 
 if [ "${SKIP_UPSTREAM_TESTS}" != "1" ]; then
+    # Note: Don't purge cache before proxy tests - it causes rate limiting issues with Docker Hub
+    # The tests will use cached data if available, which is the expected behavior
+
     log_subsection "Manifest Proxy (3-segment path)"
 
     MANIFEST_RESPONSE=$(curl -s -u "$AUTH" "${PORTAL_URL}/v2/proxy/docker.io/${TEST_IMAGE}/manifests/${TEST_TAG}" 2>/dev/null)
@@ -554,6 +599,8 @@ if [ "${SKIP_UPSTREAM_TESTS}" != "1" ]; then
 
     log_subsection "Second Tag Caching"
     test_endpoint "GET manifest ${TEST_IMAGE}:${TEST_TAG_2}" "GET" "/v2/proxy/docker.io/${TEST_IMAGE}/manifests/${TEST_TAG_2}" "200"
+    # Allow async cache write to complete
+    sleep 1
 
     log_subsection "Blob Proxy (Config - Small)"
     # Get a blob digest from the manifest
@@ -685,10 +732,11 @@ if [ "${SKIP_UPSTREAM_TESTS}" != "1" ]; then
 
     IMAGE_RESPONSE=$(curl -s -u "$AUTH" "${PORTAL_URL}/cache/images" 2>/dev/null)
 
-    if echo "$IMAGE_RESPONSE" | grep -q "proxy/docker.io/${TEST_IMAGE}"; then
-        log_pass "Proxied image appears in /images list"
+    # Check for image in cache (may be normalized with library/ prefix for Docker Hub official images)
+    if echo "$IMAGE_RESPONSE" | grep -q "proxy/docker.io/library/${TEST_IMAGE}\|proxy/docker.io/${TEST_IMAGE}"; then
+        log_pass "Proxied image appears in /cache/images list"
     else
-        log_fail "Proxied image not in /images list"
+        log_fail "Proxied image not in /cache/images list"
     fi
 
     # Count tags
@@ -708,16 +756,16 @@ if [ "${SKIP_UPSTREAM_TESTS}" != "1" ]; then
     fi
 
     log_subsection "Image Details Endpoint"
-    # Small delay to allow async cache writes to complete
-    sleep 1
+    # Allow async cache writes to complete (manifest list size calculation can take time)
+    sleep 2
     test_endpoint "Image details (${TEST_TAG})" "GET" "/image/proxy/docker.io/${TEST_IMAGE}/${TEST_TAG}/details" "200"
     test_endpoint "Image details (${TEST_TAG_2})" "GET" "/image/proxy/docker.io/${TEST_IMAGE}/${TEST_TAG_2}/details" "200"
 
     log_subsection "Image Deletion"
     test_endpoint "Delete ${TEST_IMAGE}:${TEST_TAG}" "DELETE" "/image/proxy/docker.io/${TEST_IMAGE}/${TEST_TAG}" "200"
 
-    # Verify other tag still exists
-    IMAGES_PARTIAL=$(curl -s -u "$AUTH" "${PORTAL_URL}/images" 2>/dev/null)
+    # Verify other tag still exists (proxy images are in /cache/images, not /images)
+    IMAGES_PARTIAL=$(curl -s -u "$AUTH" "${PORTAL_URL}/cache/images" 2>/dev/null)
     if echo "$IMAGES_PARTIAL" | grep -q "${TEST_TAG_2}"; then
         log_pass "${TEST_IMAGE}:${TEST_TAG_2} still exists after deleting ${TEST_TAG}"
     else

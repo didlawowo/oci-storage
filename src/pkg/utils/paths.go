@@ -1,4 +1,4 @@
-// pkg/storage/paths.go
+// pkg/utils/paths.go
 package utils
 
 import (

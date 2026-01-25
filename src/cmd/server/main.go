@@ -47,7 +47,7 @@ func setupHandlers(
 	backupService *service.BackupService,
 	log *utils.Logger,
 
-) (*handlers.HelmHandler, *handlers.ImageHandler, *handlers.OCIHandler, *handlers.ConfigHandler, *handlers.IndexHandler, *handlers.BackupHandler, *handlers.CacheHandler) {
+) (*handlers.HelmHandler, *handlers.ImageHandler, *handlers.OCIHandler, *handlers.ConfigHandler, *handlers.IndexHandler, *handlers.BackupHandler, *handlers.CacheHandler, *handlers.GCHandler) {
 	helmHandler := handlers.NewHelmHandler(chartService, pathManager, log)
 	imageHandler := handlers.NewImageHandler(imageService, proxyService, pathManager, log)
 	ociHandler := handlers.NewOCIHandler(chartService, imageService, proxyService, cfg, log)
@@ -56,7 +56,17 @@ func setupHandlers(
 	backupHandler := handlers.NewBackupHandler(backupService, log, cfg)
 	cacheHandler := handlers.NewCacheHandler(proxyService, log)
 
-	return helmHandler, imageHandler, ociHandler, configHandler, indexHandler, backupHandler, cacheHandler
+	// GC handler - needs concrete ProxyService for GCService
+	var gcHandler *handlers.GCHandler
+	if proxyService != nil {
+		// Type assert to get concrete ProxyService
+		if ps, ok := proxyService.(*service.ProxyService); ok {
+			gcService := service.NewGCService(cfg, pathManager, ps, log)
+			gcHandler = handlers.NewGCHandler(gcService, log)
+		}
+	}
+
+	return helmHandler, imageHandler, ociHandler, configHandler, indexHandler, backupHandler, cacheHandler, gcHandler
 }
 
 func setupHTTPServer(app *fiber.App, log *utils.Logger) {
@@ -108,7 +118,7 @@ func main() {
 	chartService, imageService, indexService, proxyService, backupService := setupServices(cfg, log)
 
 	// Handlers
-	helmHandler, imageHandler, ociHandler, configHandler, indexHandler, backupHandler, cacheHandler := setupHandlers(
+	helmHandler, imageHandler, ociHandler, configHandler, indexHandler, backupHandler, cacheHandler, gcHandler := setupHandlers(
 		chartService,
 		imageService,
 		indexService,
@@ -210,6 +220,12 @@ func main() {
 	app.Get("/cache/images", cacheHandler.ListCachedImages)
 	app.Delete("/cache/image/*", cacheHandler.DeleteCachedImageWildcard)
 	app.Post("/cache/purge", cacheHandler.PurgeCache)
+
+	// Garbage collection routes
+	if gcHandler != nil {
+		app.Post("/gc", gcHandler.RunGC)
+		app.Get("/gc/stats", gcHandler.GetStats)
+	}
 
 	// Routes OCI - support nested paths like charts/myapp or images/myapp
 	ociGroup.Get("/", ociHandler.HandleOCIAPI)

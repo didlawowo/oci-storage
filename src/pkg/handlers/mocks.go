@@ -61,6 +61,11 @@ func (m *MockChartService) ExtractChartMetadata(chartData []byte) (*models.Chart
 	return args.Get(0).(*models.ChartMetadata), args.Error(1)
 }
 
+func (m *MockChartService) ListChartVersions(name string) ([]string, error) {
+	args := m.Called(name)
+	return args.Get(0).([]string), args.Error(1)
+}
+
 // MockProxyService implements ProxyServiceInterface for testing
 type MockProxyService struct {
 	mock.Mock

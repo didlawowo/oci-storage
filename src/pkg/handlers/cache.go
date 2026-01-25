@@ -67,29 +67,6 @@ func (h *CacheHandler) ListCachedImages(c *fiber.Ctx) error {
 	})
 }
 
-// DeleteCachedImage removes a specific cached image
-func (h *CacheHandler) DeleteCachedImage(c *fiber.Ctx) error {
-	name, _ := url.PathUnescape(c.Params("name"))
-	tag, _ := url.PathUnescape(c.Params("tag"))
-
-	h.log.WithFunc().WithField("name", name).WithField("tag", tag).Debug("Deleting cached image")
-
-	if h.proxyService == nil || !h.proxyService.IsEnabled() {
-		return HTTPError(c, 400, "Proxy not enabled")
-	}
-
-	if err := h.proxyService.DeleteCachedImage(name, tag); err != nil {
-		h.log.WithFunc().WithError(err).Error("Failed to delete cached image")
-		return HTTPError(c, 500, err.Error())
-	}
-
-	return c.JSON(fiber.Map{
-		"message": "Cached image deleted",
-		"name":    name,
-		"tag":     tag,
-	})
-}
-
 // PurgeCache clears all cached images
 func (h *CacheHandler) PurgeCache(c *fiber.Ctx) error {
 	h.log.WithFunc().Info("Purging cache")

@@ -33,3 +33,14 @@ func (cs *CacheState) CalculateUsagePercent() {
 		cs.UsagePercent = 0
 	}
 }
+
+// StorageStats contains storage statistics for the registry
+type StorageStats struct {
+	BlobCount        int   `json:"blobCount"`
+	BlobsSize        int64 `json:"blobsSize"`
+	CachedImageCount int   `json:"cachedImageCount"`
+	CachedImagesSize int64 `json:"cachedImagesSize"`
+	ChartCount       int   `json:"chartCount"`
+	ChartsSize       int64 `json:"chartsSize"`
+	TotalSize        int64 `json:"totalSize"`
+}

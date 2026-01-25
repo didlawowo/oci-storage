@@ -78,9 +78,13 @@ func (h *OCIHandler) GetBlob(c *fiber.Ctx) error {
 		return HTTPError(c, 400, "Invalid repository name")
 	}
 
+	// Normalize Docker Hub names for consistent cache lookup
+	normalizedName := h.normalizeImageName(name)
+
 	h.log.WithFunc().WithFields(logrus.Fields{
-		"name":   name,
-		"digest": digest,
+		"name":           name,
+		"normalizedName": normalizedName,
+		"digest":         digest,
 	}).Debug("Processing blob download request")
 
 	// Try local first - use SendFile to avoid loading entire blob into memory
@@ -94,11 +98,11 @@ func (h *OCIHandler) GetBlob(c *fiber.Ctx) error {
 	// Not found locally - try proxy if enabled
 	if h.proxyService != nil && h.proxyService.IsEnabled() {
 		h.log.WithFunc().WithFields(logrus.Fields{
-			"name":   name,
-			"digest": digest,
+			"name":           normalizedName,
+			"digest":         digest,
 		}).Debug("Blob not found locally, trying proxy")
 
-		return h.proxyBlob(c, name, digest)
+		return h.proxyBlob(c, normalizedName, digest)
 	}
 
 	h.log.WithFunc().Debug("Blob not found")
@@ -191,13 +195,17 @@ func (h *OCIHandler) HandleManifest(c *fiber.Ctx) error {
 		return HTTPError(c, 400, "Invalid reference format")
 	}
 
+	// Normalize Docker Hub names for cache lookup (traefik -> library/traefik)
+	normalizedName := h.normalizeImageName(name)
+
 	h.log.WithFunc().WithFields(logrus.Fields{
-		"name":      name,
-		"reference": reference,
+		"name":           name,
+		"normalizedName": normalizedName,
+		"reference":      reference,
 	}).Debug("Processing manifest request")
 
-	// Try to find manifest in local storage first
-	manifestData, manifestPath, err := h.findManifest(name, reference)
+	// Try to find manifest in local storage first (use normalized name for cache consistency)
+	manifestData, manifestPath, err := h.findManifest(normalizedName, reference)
 	if err == nil {
 		h.log.WithFunc().WithFields(logrus.Fields{
 			"manifestPath": manifestPath,
@@ -205,7 +213,7 @@ func (h *OCIHandler) HandleManifest(c *fiber.Ctx) error {
 		}).Debug("Found manifest locally")
 
 		if h.proxyService != nil && h.proxyService.IsEnabled() {
-			h.proxyService.UpdateAccessTime(name, reference)
+			h.proxyService.UpdateAccessTime(normalizedName, reference)
 		}
 
 		return h.sendManifestResponse(c, manifestData, reference)
@@ -214,7 +222,7 @@ func (h *OCIHandler) HandleManifest(c *fiber.Ctx) error {
 	// Not found locally - try proxy if enabled
 	// ONLY proxy for paths starting with "proxy/" - this protects charts/ and images/ from being proxied
 	// HEAD requests are allowed for proxy paths (needed for container runtime manifest checks)
-	isProxyPath := strings.HasPrefix(name, "proxy/")
+	isProxyPath := strings.HasPrefix(normalizedName, "proxy/")
 	shouldProxy := h.proxyService != nil && h.proxyService.IsEnabled() && isProxyPath
 
 	h.log.WithFunc().WithFields(logrus.Fields{
@@ -225,11 +233,11 @@ func (h *OCIHandler) HandleManifest(c *fiber.Ctx) error {
 
 	if shouldProxy {
 		h.log.WithFunc().WithFields(logrus.Fields{
-			"name":      name,
-			"reference": reference,
+			"name":           normalizedName,
+			"reference":      reference,
 		}).Debug("Manifest not found locally, trying proxy")
 
-		return h.proxyManifest(c, name, reference)
+		return h.proxyManifest(c, normalizedName, reference)
 	}
 
 	h.log.WithFunc().WithError(err).Debug("Manifest not found")
@@ -375,13 +383,19 @@ func (h *OCIHandler) PostUpload(c *fiber.Ctx) error {
 		"uuid": uuid,
 	}).Debug("Initializing upload")
 
-	location := fmt.Sprintf("/v2/%s/blobs/uploads/%s", name, uuid)
+	// Build absolute URL for Location header (required by crane and other OCI clients)
+	scheme := "http"
+	if c.Protocol() == "https" {
+		scheme = "https"
+	}
+	location := fmt.Sprintf("%s://%s/v2/%s/blobs/uploads/%s", scheme, c.Hostname(), name, uuid)
 	c.Set("Location", location)
 	c.Set("Docker-Upload-UUID", uuid)
 	return c.SendStatus(202)
 }
 
 func (h *OCIHandler) PatchBlob(c *fiber.Ctx) error {
+	name := h.getName(c)
 	uuid := c.Params("uuid")
 
 	// Validate UUID to prevent path traversal
@@ -414,6 +428,15 @@ func (h *OCIHandler) PatchBlob(c *fiber.Ctx) error {
 	}
 
 	h.log.WithFunc().Info("Successfully processed PATCH data")
+
+	// Build absolute URL for Location header (required by OCI clients like crane)
+	scheme := "http"
+	if c.Protocol() == "https" {
+		scheme = "https"
+	}
+	location := fmt.Sprintf("%s://%s/v2/%s/blobs/uploads/%s", scheme, c.Hostname(), name, uuid)
+	c.Set("Location", location)
+	c.Set("Docker-Upload-UUID", uuid)
 	c.Set("Range", fmt.Sprintf("0-%d", len(c.Body())-1))
 	return c.SendStatus(202)
 }
@@ -636,7 +659,12 @@ func (h *OCIHandler) PutManifest(c *fiber.Ctx) error {
 	}
 
 	c.Set("Docker-Content-Digest", digestStr)
-	c.Set("Location", fmt.Sprintf("/v2/%s/manifests/%s", name, digestStr))
+	// Build absolute URL for Location header (required by OCI clients)
+	scheme := "http"
+	if c.Protocol() == "https" {
+		scheme = "https"
+	}
+	c.Set("Location", fmt.Sprintf("%s://%s/v2/%s/manifests/%s", scheme, c.Hostname(), name, digestStr))
 
 	h.log.WithFunc().WithFields(logrus.Fields{
 		"name":      name,
