@@ -50,6 +50,16 @@ func (s *ImageService) GetPathManager() *utils.PathManager {
 // IMPORTANT: This function only saves metadata, NOT the manifest itself.
 // The manifest must be saved separately using raw bytes to preserve digest integrity.
 func (s *ImageService) SaveImage(name, reference string, manifest *models.OCIManifest) error {
+	// Skip saving metadata for digest references - only save for actual tags
+	// Digests are stored in manifests/ directory, not in tags/
+	if strings.HasPrefix(reference, "sha256:") {
+		s.log.WithFields(logrus.Fields{
+			"name":      name,
+			"reference": reference,
+		}).Debug("Skipping metadata save for digest reference")
+		return nil
+	}
+
 	s.log.WithFields(logrus.Fields{
 		"name":      name,
 		"reference": reference,
@@ -135,6 +145,11 @@ func (s *ImageService) ListImages() ([]models.ImageGroup, error) {
 		}
 		repoName := relPath
 
+		// Skip proxy images - they are listed via /cache/images endpoint
+		if strings.HasPrefix(repoName, "proxy/") || strings.HasPrefix(repoName, "proxy\\") {
+			return nil
+		}
+
 		// Read tag files
 		tags, err := os.ReadDir(path)
 		if err != nil {
@@ -148,6 +163,11 @@ func (s *ImageService) ListImages() ([]models.ImageGroup, error) {
 			}
 
 			tagName := strings.TrimSuffix(tagFile.Name(), ".json")
+
+			// Skip digest references - only show actual tags
+			if strings.HasPrefix(tagName, "sha256") {
+				continue
+			}
 			metadata, err := s.GetImageMetadata(repoName, tagName)
 			if err != nil {
 				s.log.WithError(err).WithFields(logrus.Fields{

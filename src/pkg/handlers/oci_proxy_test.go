@@ -87,7 +87,7 @@ func TestHandleManifest_ProxyOnMiss(t *testing.T) {
 	upstreamManifest := []byte(`{"schemaVersion": 2, "mediaType": "application/vnd.oci.image.manifest.v1+json"}`)
 
 	mockProxyService.On("IsEnabled").Return(true)
-	mockProxyService.On("ResolveRegistry", "proxy/docker.io/nginx").Return("https://registry-1.docker.io", "library/nginx", nil)
+	mockProxyService.On("ResolveRegistry", "proxy/docker.io/library/nginx").Return("https://registry-1.docker.io", "library/nginx", nil)
 	mockProxyService.On("GetManifest", mock.Anything, "https://registry-1.docker.io", "library/nginx", "alpine").
 		Return(upstreamManifest, "application/vnd.oci.image.manifest.v1+json", nil)
 	mockProxyService.On("AddToCache", mock.Anything).Return(nil)
@@ -117,7 +117,7 @@ func TestHandleManifest_ProxyDigestReference(t *testing.T) {
 	digest := "sha256:dcfed685de6f232a6cefc043f92d8b0d64c8d1edf650a61805f2c7a3d745b749"
 
 	mockProxyService.On("IsEnabled").Return(true)
-	mockProxyService.On("ResolveRegistry", "proxy/docker.io/nginx").Return("https://registry-1.docker.io", "library/nginx", nil)
+	mockProxyService.On("ResolveRegistry", "proxy/docker.io/library/nginx").Return("https://registry-1.docker.io", "library/nginx", nil)
 	mockProxyService.On("GetManifest", mock.Anything, "https://registry-1.docker.io", "library/nginx", digest).
 		Return(childManifest, "application/vnd.oci.image.manifest.v1+json", nil)
 
@@ -202,7 +202,7 @@ func TestGetBlob_LocalFound(t *testing.T) {
 	app.Get("/v2/:name/blobs/:digest", handler.GetBlob)
 
 	blobContent := []byte("test blob content")
-	digest := "sha256:abc123def456"
+	digest := "sha256:abc123def456abc123def456abc123def456abc123def456abc123def456abcd"
 
 	// Create blob file locally
 	blobDir := filepath.Join(tempDir, "blobs")
@@ -229,7 +229,7 @@ func TestGetBlob_ProxyTriggered(t *testing.T) {
 
 	app.Get("/v2/:name/blobs/:digest", handler.GetBlob)
 
-	digest := "sha256:notfound123"
+	digest := "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
 	mockProxyService.On("IsEnabled").Return(true)
 	mockProxyService.On("ResolveRegistry", "nginx").Return("https://registry-1.docker.io", "library/nginx", nil)
@@ -310,7 +310,7 @@ func TestMultiArchManifestFlow(t *testing.T) {
 	// Setup mocks - all GetManifest calls must be configured upfront
 	// because prefetchPlatformManifests runs in a goroutine
 	mockProxyService.On("IsEnabled").Return(true)
-	mockProxyService.On("ResolveRegistry", "proxy/docker.io/nginx").Return("https://registry-1.docker.io", "library/nginx", nil)
+	mockProxyService.On("ResolveRegistry", "proxy/docker.io/library/nginx").Return("https://registry-1.docker.io", "library/nginx", nil)
 	mockProxyService.On("GetManifest", mock.Anything, "https://registry-1.docker.io", "library/nginx", "alpine").
 		Return(indexManifest, "application/vnd.oci.image.index.v1+json", nil)
 	mockProxyService.On("GetManifest", mock.Anything, "https://registry-1.docker.io", "library/nginx", childDigest).
@@ -385,7 +385,7 @@ func TestDeepNestedPath_3Segments_ProxyManifest(t *testing.T) {
 
 	// The full path "proxy/docker.io/nginx" should be assembled and resolved
 	mockProxyService.On("IsEnabled").Return(true)
-	mockProxyService.On("ResolveRegistry", "proxy/docker.io/nginx").Return("https://registry-1.docker.io", "library/nginx", nil)
+	mockProxyService.On("ResolveRegistry", "proxy/docker.io/library/nginx").Return("https://registry-1.docker.io", "library/nginx", nil)
 	mockProxyService.On("GetManifest", mock.Anything, "https://registry-1.docker.io", "library/nginx", "alpine").
 		Return(upstreamManifest, "application/vnd.oci.image.manifest.v1+json", nil)
 	mockProxyService.On("AddToCache", mock.Anything).Return(nil)
@@ -406,12 +406,12 @@ func TestDeepNestedPath_3Segments_HeadManifest(t *testing.T) {
 
 	app.Head("/v2/:ns1/:ns2/:name/manifests/:reference", handler.HandleManifestDeepNested)
 
-	digest := "sha256:abc123"
+	digest := "sha256:abc123abc123abc123abc123abc123abc123abc123abc123abc123abc123abcd"
 	upstreamManifest := []byte(`{"schemaVersion": 2, "mediaType": "application/vnd.oci.image.manifest.v1+json"}`)
 
 	mockProxyService.On("IsEnabled").Return(true)
 	// HEAD requests DO proxy for proxy/ paths - needed for container runtime manifest checks
-	mockProxyService.On("ResolveRegistry", "proxy/docker.io/nginx").Return("https://registry-1.docker.io", "library/nginx", nil)
+	mockProxyService.On("ResolveRegistry", "proxy/docker.io/library/nginx").Return("https://registry-1.docker.io", "library/nginx", nil)
 	mockProxyService.On("GetManifest", mock.Anything, "https://registry-1.docker.io", "library/nginx", digest).
 		Return(upstreamManifest, "application/vnd.oci.image.manifest.v1+json", nil)
 	mockProxyService.On("AddToCache", mock.Anything).Return(nil)
@@ -431,10 +431,10 @@ func TestDeepNestedPath_3Segments_GetBlob(t *testing.T) {
 
 	app.Get("/v2/:ns1/:ns2/:name/blobs/:digest", handler.GetBlobDeepNested)
 
-	digest := "sha256:notfound123"
+	digest := "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
 	mockProxyService.On("IsEnabled").Return(true)
-	mockProxyService.On("ResolveRegistry", "proxy/docker.io/nginx").Return("https://registry-1.docker.io", "library/nginx", nil)
+	mockProxyService.On("ResolveRegistry", "proxy/docker.io/library/nginx").Return("https://registry-1.docker.io", "library/nginx", nil)
 	mockProxyService.On("GetBlob", mock.Anything, "https://registry-1.docker.io", "library/nginx", digest).
 		Return(nil, int64(0), io.EOF)
 
@@ -479,7 +479,7 @@ func TestDeepNestedPath_4Segments_HeadManifest(t *testing.T) {
 
 	app.Head("/v2/:ns1/:ns2/:ns3/:name/manifests/:reference", handler.HandleManifestDeepNested4)
 
-	digest := "sha256:abc123"
+	digest := "sha256:abc123abc123abc123abc123abc123abc123abc123abc123abc123abc123abcd"
 	upstreamManifest := []byte(`{"schemaVersion": 2, "mediaType": "application/vnd.oci.image.manifest.v1+json"}`)
 
 	mockProxyService.On("IsEnabled").Return(true)
@@ -504,7 +504,7 @@ func TestDeepNestedPath_4Segments_GetBlob(t *testing.T) {
 
 	app.Get("/v2/:ns1/:ns2/:ns3/:name/blobs/:digest", handler.GetBlobDeepNested4)
 
-	digest := "sha256:notfound123"
+	digest := "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
 	mockProxyService.On("IsEnabled").Return(true)
 	mockProxyService.On("ResolveRegistry", "proxy/docker.io/library/nginx").Return("https://registry-1.docker.io", "library/nginx", nil)

@@ -315,35 +315,77 @@ func (s *ProxyService) parseWwwAuthenticate(header string) map[string]string {
 	return params
 }
 
-// GetCacheState returns the current cache state with total size from image metadata
+// GetCacheState returns the current cache state calculated from filesystem
 func (s *ProxyService) GetCacheState() *models.CacheState {
-	s.cacheMutex.RLock()
-	defer s.cacheMutex.RUnlock()
+	images, err := s.GetCachedImages()
+	if err != nil {
+		s.log.WithError(err).Warn("Failed to get cached images for state")
+		return &models.CacheState{
+			MaxSize: int64(s.config.Proxy.Cache.MaxSizeGB) * 1024 * 1024 * 1024,
+		}
+	}
 
-	// Sum the sizes from cached image metadata (calculated from layer sizes)
 	var totalSize int64
-	for _, img := range s.cacheState.Images {
+	for _, img := range images {
 		totalSize += img.Size
 	}
 
 	state := &models.CacheState{
 		TotalSize: totalSize,
-		MaxSize:   s.cacheState.MaxSize,
-		ItemCount: len(s.cacheState.Images),
+		MaxSize:   int64(s.config.Proxy.Cache.MaxSizeGB) * 1024 * 1024 * 1024,
+		ItemCount: len(images),
 	}
 	state.CalculateUsagePercent()
 
 	return state
 }
 
-// GetCachedImages returns all cached images metadata
+// GetCachedImages returns all cached images metadata by scanning the filesystem
+// This ensures consistency - the filesystem is the single source of truth
 func (s *ProxyService) GetCachedImages() ([]models.CachedImageMetadata, error) {
-	s.cacheMutex.RLock()
-	defer s.cacheMutex.RUnlock()
+	metadataDir := filepath.Join(s.pathManager.GetBasePath(), "cache", "metadata")
 
-	// Return a copy to avoid race conditions
-	images := make([]models.CachedImageMetadata, len(s.cacheState.Images))
-	copy(images, s.cacheState.Images)
+	// Ensure directory exists
+	if _, err := os.Stat(metadataDir); os.IsNotExist(err) {
+		return []models.CachedImageMetadata{}, nil
+	}
+
+	files, err := os.ReadDir(metadataDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read cache metadata directory: %w", err)
+	}
+
+	var images []models.CachedImageMetadata
+	for _, file := range files {
+		if file.IsDir() || !strings.HasSuffix(file.Name(), ".json") {
+			continue
+		}
+
+		filePath := filepath.Join(metadataDir, file.Name())
+		data, err := os.ReadFile(filePath)
+		if err != nil {
+			s.log.WithError(err).WithField("file", file.Name()).Warn("Failed to read cache metadata file")
+			continue
+		}
+
+		var metadata models.CachedImageMetadata
+		if err := json.Unmarshal(data, &metadata); err != nil {
+			s.log.WithError(err).WithField("file", file.Name()).Warn("Failed to parse cache metadata file")
+			continue
+		}
+
+		// Skip entries with invalid/corrupted tags (digest fragments, etc)
+		// Valid tags should not contain ":" (digest fragments like "56:1" or "sha256:...")
+		if strings.Contains(metadata.Tag, ":") || len(metadata.Tag) < 2 {
+			s.log.WithFields(logrus.Fields{
+				"file": file.Name(),
+				"tag":  metadata.Tag,
+			}).Debug("Skipping corrupted cache entry")
+			continue
+		}
+
+		images = append(images, metadata)
+	}
 
 	return images, nil
 }
@@ -366,32 +408,100 @@ func (s *ProxyService) UpdateAccessTime(name, tag string) {
 }
 
 // AddToCache adds image metadata to the cache tracking
+// Each image is stored as an individual file for consistency
 func (s *ProxyService) AddToCache(metadata models.CachedImageMetadata) error {
-	s.cacheMutex.Lock()
-	defer s.cacheMutex.Unlock()
+	// Skip invalid or digest-like references - only cache actual tags
+	// Valid tags: latest, v1.0, alpine, 3.12-alpine, etc.
+	// Invalid: sha256:..., sha2, :abc, manifest fragments, etc.
+	tag := metadata.Tag
+	if strings.HasPrefix(tag, "sha") ||
+		strings.HasPrefix(tag, ":") ||
+		strings.Contains(tag, "manifest") ||
+		len(tag) < 2 ||
+		len(tag) > 128 {
+		s.log.WithFields(logrus.Fields{
+			"name": metadata.Name,
+			"tag":  tag,
+		}).Debug("Skipping cache for invalid/digest reference")
+		return nil
+	}
 
-	// Check if image already exists
-	for i, img := range s.cacheState.Images {
-		if img.Name == metadata.Name && img.Tag == metadata.Tag {
-			// Update existing
-			s.cacheState.Images[i] = metadata
-			return s.saveCacheState()
+	metadataPath := s.pathManager.GetCachedImageMetadataPath(metadata.Name, metadata.Tag)
+
+	// Ensure directory exists
+	if err := os.MkdirAll(filepath.Dir(metadataPath), 0755); err != nil {
+		return fmt.Errorf("failed to create cache metadata directory: %w", err)
+	}
+
+	data, err := json.MarshalIndent(metadata, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal cache metadata: %w", err)
+	}
+
+	if err := os.WriteFile(metadataPath, data, 0644); err != nil {
+		return fmt.Errorf("failed to write cache metadata: %w", err)
+	}
+
+	s.log.WithFields(logrus.Fields{
+		"name": metadata.Name,
+		"tag":  metadata.Tag,
+		"path": metadataPath,
+	}).Debug("Cache metadata saved")
+
+	// Check if we need to evict (recalculate total size)
+	s.checkAndEvictIfNeeded()
+
+	return nil
+}
+
+// checkAndEvictIfNeeded calculates total cache size and evicts if over limit
+func (s *ProxyService) checkAndEvictIfNeeded() {
+	images, err := s.GetCachedImages()
+	if err != nil {
+		s.log.WithError(err).Warn("Failed to get cached images for eviction check")
+		return
+	}
+
+	var totalSize int64
+	for _, img := range images {
+		totalSize += img.Size
+	}
+
+	maxSize := int64(s.config.Proxy.Cache.MaxSizeGB) * 1024 * 1024 * 1024
+	if totalSize > maxSize {
+		s.log.WithFields(logrus.Fields{
+			"totalSize": totalSize,
+			"maxSize":   maxSize,
+		}).Info("Cache over limit, triggering eviction")
+
+		// Sort by last accessed and evict oldest
+		sort.Slice(images, func(i, j int) bool {
+			return images[i].LastAccessed.Before(images[j].LastAccessed)
+		})
+
+		targetSize := maxSize * 90 / 100 // Evict to 90% capacity
+		for _, img := range images {
+			if totalSize <= targetSize {
+				break
+			}
+
+			s.log.WithFields(logrus.Fields{
+				"image": img.Name,
+				"tag":   img.Tag,
+				"size":  img.Size,
+			}).Info("Evicting cached image (LRU)")
+
+			if err := s.deleteCachedImageFiles(img.Name, img.Tag); err != nil {
+				s.log.WithError(err).Warn("Failed to delete cached image files during eviction")
+			}
+
+			// Delete metadata file
+			metadataPath := s.pathManager.GetCachedImageMetadataPath(img.Name, img.Tag)
+			os.Remove(metadataPath)
+
+			totalSize -= img.Size
 		}
 	}
-
-	// Add new
-	s.cacheState.Images = append(s.cacheState.Images, metadata)
-	s.cacheState.TotalSize += metadata.Size
-	s.cacheState.ItemCount++
-
-	// Check if we need to evict
-	maxSize := int64(s.config.Proxy.Cache.MaxSizeGB) * 1024 * 1024 * 1024
-	if s.cacheState.TotalSize > maxSize {
-		// Evict without lock (we already have it)
-		s.evictLRUInternal(maxSize * 90 / 100) // Evict to 90% capacity
-	}
-
-	return s.saveCacheState()
 }
 
 // EvictLRU removes least recently used images until target size is reached
@@ -440,51 +550,16 @@ func (s *ProxyService) evictLRUInternal(targetBytes int64) error {
 
 // DeleteCachedImage removes a specific cached image
 func (s *ProxyService) DeleteCachedImage(name, tag string) error {
-	s.cacheMutex.Lock()
-	defer s.cacheMutex.Unlock()
-
-	foundInState := false
-
-	// Find and remove from cache state
-	for i, img := range s.cacheState.Images {
-		if img.Name == name && img.Tag == tag {
-			// Update state
-			s.cacheState.TotalSize -= img.Size
-			s.cacheState.Images = append(s.cacheState.Images[:i], s.cacheState.Images[i+1:]...)
-			s.cacheState.ItemCount--
-			foundInState = true
-			break
-		}
+	// Delete the cache metadata file (source of truth)
+	metadataPath := s.pathManager.GetCachedImageMetadataPath(name, tag)
+	if err := os.Remove(metadataPath); err != nil && !os.IsNotExist(err) {
+		s.log.WithError(err).WithField("path", metadataPath).Warn("Failed to delete cache metadata file")
 	}
 
-	// Always try to delete files (even if not in state - handles desync)
+	// Delete image files (manifests, tags)
 	s.deleteCachedImageFiles(name, tag)
 
-	// Save state if we found it there
-	if foundInState {
-		if err := s.saveCacheState(); err != nil {
-			return err
-		}
-		s.log.WithField("name", name).WithField("tag", tag).Info("Cached image deleted from state and files")
-		return nil
-	}
-
-	// Check if files existed (by checking if manifest path exists)
-	basePath := s.pathManager.GetBasePath()
-	manifestPath := filepath.Join(basePath, "images", name, "manifests", tag+".json")
-	tagPath := filepath.Join(basePath, "images", name, "tags", tag+".json")
-
-	// If either file existed before deletion, consider it a success
-	// (the files were already deleted by deleteCachedImageFiles)
-	if _, err := os.Stat(manifestPath); os.IsNotExist(err) {
-		if _, err := os.Stat(tagPath); os.IsNotExist(err) {
-			// Files don't exist anymore - deletion was successful or files never existed
-			s.log.WithField("name", name).WithField("tag", tag).Debug("Image files cleaned up (may not have been in cache state)")
-			return nil
-		}
-	}
-
-	s.log.WithField("name", name).WithField("tag", tag).Info("Cached image files deleted")
+	s.log.WithField("name", name).WithField("tag", tag).Info("Cached image deleted")
 	return nil
 }
 
@@ -582,13 +657,17 @@ func (s *ProxyService) PurgeAllCache() error {
 		s.log.WithError(err).Warn("Failed to recreate cache metadata directory")
 	}
 
-	// Reset cache state
+	// Reset cache state in memory
 	s.cacheState.Images = []models.CachedImageMetadata{}
 	s.cacheState.TotalSize = 0
 	s.cacheState.ItemCount = 0
 
+	// Delete legacy state.json if exists (we use filesystem as source of truth now)
+	statePath := s.pathManager.GetCacheStatePath()
+	os.Remove(statePath)
+
 	s.log.Info("Cache purged successfully")
-	return s.saveCacheState()
+	return nil
 }
 
 // loadCacheState loads the cache state from disk
