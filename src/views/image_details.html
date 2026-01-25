@@ -48,6 +48,95 @@
                 </div>
             </div>
 
+            {{if .Image.Platforms}}
+            <!-- Available Platforms (Multi-arch) -->
+            <div class="mb-6">
+                <h3 class="text-lg font-semibold mb-2 flex items-center gap-2">
+                    <i class="material-icons text-gray-600">devices</i>
+                    Available Platforms (<span id="platformCount">{{len .Image.Platforms}}</span>)
+                </h3>
+                <div class="flex flex-wrap gap-2" id="platformList">
+                    {{range .Image.Platforms}}
+                    <span class="platform-badge bg-indigo-100 text-indigo-800 px-3 py-1 rounded-full text-sm font-medium flex items-center gap-1" data-os="{{.OS}}" data-arch="{{.Architecture}}">
+                        <i class="material-icons text-sm">memory</i>
+                        {{.OS}}/{{.Architecture}}{{if .Variant}}/{{.Variant}}{{end}}
+                    </span>
+                    {{end}}
+                </div>
+            </div>
+            {{end}}
+
+            <!-- Security Insights -->
+            <div class="mb-6">
+                <h3 class="text-lg font-semibold mb-2 flex items-center gap-2">
+                    <i class="material-icons text-gray-600">security</i>
+                    Security Insights
+                </h3>
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3" id="securityInsights">
+                    <!-- User check -->
+                    <div class="security-item p-3 rounded-lg border flex items-center gap-3" id="securityUser">
+                        <i class="material-icons text-2xl" id="securityUserIcon">person</i>
+                        <div>
+                            <div class="font-medium text-sm" id="securityUserTitle">Runtime User</div>
+                            <div class="text-xs" id="securityUserValue">
+                                {{if .Image.Config}}{{if .Image.Config.Config}}{{if .Image.Config.Config.User}}{{.Image.Config.Config.User}}{{else}}root (default){{end}}{{else}}Unknown{{end}}{{else}}Unknown{{end}}
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Image Age -->
+                    <div class="security-item p-3 rounded-lg border flex items-center gap-3" id="securityAge">
+                        <i class="material-icons text-2xl" id="securityAgeIcon">schedule</i>
+                        <div>
+                            <div class="font-medium text-sm">Image Age</div>
+                            <div class="text-xs" id="securityAgeValue" data-created="{{if .Image.Config}}{{.Image.Config.Created}}{{end}}">
+                                {{if .Image.Config}}{{.Image.Config.Created}}{{else}}Unknown{{end}}
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Exposed Ports Count -->
+                    <div class="security-item p-3 rounded-lg border flex items-center gap-3" id="securityPorts">
+                        <i class="material-icons text-2xl" id="securityPortsIcon">hub</i>
+                        <div>
+                            <div class="font-medium text-sm">Exposed Ports</div>
+                            <div class="text-xs" id="securityPortsValue">
+                                {{if .Image.Config}}{{if .Image.Config.Config}}{{if .Image.Config.Config.ExposedPorts}}{{len .Image.Config.Config.ExposedPorts}} port(s){{else}}None{{end}}{{else}}Unknown{{end}}{{else}}Unknown{{end}}
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Layer Count -->
+                    <div class="security-item p-3 rounded-lg border flex items-center gap-3" id="securityLayers">
+                        <i class="material-icons text-2xl" id="securityLayersIcon">layers</i>
+                        <div>
+                            <div class="font-medium text-sm">Layer Count</div>
+                            <div class="text-xs" id="securityLayersValue">
+                                {{if .Image.Layers}}{{len .Image.Layers}} layers{{else}}Unknown{{end}}
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Base Image Detection -->
+                    <div class="security-item p-3 rounded-lg border flex items-center gap-3" id="securityBase">
+                        <i class="material-icons text-2xl" id="securityBaseIcon">foundation</i>
+                        <div>
+                            <div class="font-medium text-sm">Base Image</div>
+                            <div class="text-xs" id="securityBaseValue">Analyzing...</div>
+                        </div>
+                    </div>
+
+                    <!-- Sensitive Env Vars -->
+                    <div class="security-item p-3 rounded-lg border flex items-center gap-3" id="securityEnv">
+                        <i class="material-icons text-2xl" id="securityEnvIcon">vpn_key</i>
+                        <div>
+                            <div class="font-medium text-sm">Sensitive Env Vars</div>
+                            <div class="text-xs" id="securityEnvValue">Checking...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- Digest -->
             <div class="mb-6">
                 <h3 class="text-lg font-semibold mb-2 flex items-center gap-2">
@@ -267,7 +356,196 @@
         document.querySelectorAll('.portal-host').forEach(el => {
             el.textContent = portalHost;
         });
+
+        // Filter out unknown/unknown platforms and update count
+        const platformList = document.getElementById('platformList');
+        const platformCount = document.getElementById('platformCount');
+        if (platformList) {
+            const badges = platformList.querySelectorAll('.platform-badge');
+            let validCount = 0;
+            badges.forEach(badge => {
+                if (badge.dataset.os === 'unknown' && badge.dataset.arch === 'unknown') {
+                    badge.remove();
+                } else {
+                    validCount++;
+                }
+            });
+            if (platformCount) {
+                platformCount.textContent = validCount;
+            }
+        }
+
+        // Security Insights Analysis
+        analyzeSecurityInsights();
     });
+
+    // Security color helpers
+    function setSecurityStatus(elementId, status) {
+        const el = document.getElementById(elementId);
+        const icon = document.getElementById(elementId + 'Icon');
+        if (!el) return;
+
+        el.classList.remove('bg-red-50', 'bg-yellow-50', 'bg-green-50', 'bg-gray-50');
+        el.classList.remove('border-red-200', 'border-yellow-200', 'border-green-200', 'border-gray-200');
+        if (icon) {
+            icon.classList.remove('text-red-500', 'text-yellow-500', 'text-green-500', 'text-gray-400');
+        }
+
+        switch(status) {
+            case 'danger':
+                el.classList.add('bg-red-50', 'border-red-200');
+                if (icon) icon.classList.add('text-red-500');
+                break;
+            case 'warning':
+                el.classList.add('bg-yellow-50', 'border-yellow-200');
+                if (icon) icon.classList.add('text-yellow-500');
+                break;
+            case 'success':
+                el.classList.add('bg-green-50', 'border-green-200');
+                if (icon) icon.classList.add('text-green-500');
+                break;
+            default:
+                el.classList.add('bg-gray-50', 'border-gray-200');
+                if (icon) icon.classList.add('text-gray-400');
+        }
+    }
+
+    function analyzeSecurityInsights() {
+        // 1. User Analysis
+        const userValue = document.getElementById('securityUserValue');
+        if (userValue) {
+            const user = userValue.textContent.trim();
+            if (user === 'root (default)' || user === 'root' || user === '0') {
+                setSecurityStatus('securityUser', 'warning');
+            } else if (user === 'Unknown') {
+                setSecurityStatus('securityUser', 'neutral');
+            } else {
+                setSecurityStatus('securityUser', 'success');
+            }
+        }
+
+        // 2. Image Age Analysis
+        const ageEl = document.getElementById('securityAgeValue');
+        if (ageEl && ageEl.dataset.created) {
+            const created = new Date(ageEl.dataset.created);
+            const now = new Date();
+            const daysDiff = Math.floor((now - created) / (1000 * 60 * 60 * 24));
+
+            if (!isNaN(daysDiff)) {
+                let ageText = '';
+                if (daysDiff === 0) ageText = 'Today';
+                else if (daysDiff === 1) ageText = 'Yesterday';
+                else if (daysDiff < 30) ageText = daysDiff + ' days ago';
+                else if (daysDiff < 365) ageText = Math.floor(daysDiff / 30) + ' months ago';
+                else ageText = Math.floor(daysDiff / 365) + ' years ago';
+
+                ageEl.textContent = ageText;
+
+                if (daysDiff > 365) {
+                    setSecurityStatus('securityAge', 'danger');
+                } else if (daysDiff > 90) {
+                    setSecurityStatus('securityAge', 'warning');
+                } else {
+                    setSecurityStatus('securityAge', 'success');
+                }
+            }
+        }
+
+        // 3. Exposed Ports Analysis
+        const portsValue = document.getElementById('securityPortsValue');
+        if (portsValue) {
+            const text = portsValue.textContent.trim();
+            if (text === 'None') {
+                setSecurityStatus('securityPorts', 'success');
+            } else {
+                const match = text.match(/(\d+)/);
+                if (match) {
+                    const count = parseInt(match[1]);
+                    if (count > 5) {
+                        setSecurityStatus('securityPorts', 'warning');
+                    } else {
+                        setSecurityStatus('securityPorts', 'success');
+                    }
+                }
+            }
+        }
+
+        // 4. Layer Count Analysis
+        const layersValue = document.getElementById('securityLayersValue');
+        if (layersValue) {
+            const match = layersValue.textContent.match(/(\d+)/);
+            if (match) {
+                const count = parseInt(match[1]);
+                if (count > 20) {
+                    setSecurityStatus('securityLayers', 'warning');
+                } else if (count > 10) {
+                    setSecurityStatus('securityLayers', 'neutral');
+                } else {
+                    setSecurityStatus('securityLayers', 'success');
+                }
+            }
+        }
+
+        // 5. Base Image Detection (from history)
+        const historyEls = document.querySelectorAll('.space-y-2 .text-sm.font-mono');
+        const baseEl = document.getElementById('securityBaseValue');
+        if (baseEl && historyEls.length > 0) {
+            const firstCommand = historyEls[0]?.textContent || '';
+            let baseImage = 'Unknown';
+            let status = 'neutral';
+
+            if (firstCommand.includes('alpine') || firstCommand.includes('Alpine')) {
+                baseImage = 'Alpine Linux';
+                status = 'success';
+            } else if (firstCommand.includes('debian') || firstCommand.includes('Debian')) {
+                baseImage = 'Debian';
+                status = 'neutral';
+            } else if (firstCommand.includes('ubuntu') || firstCommand.includes('Ubuntu')) {
+                baseImage = 'Ubuntu';
+                status = 'neutral';
+            } else if (firstCommand.includes('scratch')) {
+                baseImage = 'Scratch (minimal)';
+                status = 'success';
+            } else if (firstCommand.includes('distroless')) {
+                baseImage = 'Distroless';
+                status = 'success';
+            } else if (firstCommand.includes('busybox')) {
+                baseImage = 'BusyBox';
+                status = 'success';
+            } else if (firstCommand.includes('centos') || firstCommand.includes('CentOS')) {
+                baseImage = 'CentOS';
+                status = 'neutral';
+            } else if (firstCommand.includes('fedora') || firstCommand.includes('Fedora')) {
+                baseImage = 'Fedora';
+                status = 'neutral';
+            }
+
+            baseEl.textContent = baseImage;
+            setSecurityStatus('securityBase', status);
+        }
+
+        // 6. Sensitive Environment Variables Detection
+        const envSection = document.querySelector('pre.text-green-400');
+        const envEl = document.getElementById('securityEnvValue');
+        if (envEl) {
+            if (!envSection) {
+                envEl.textContent = 'No env vars';
+                setSecurityStatus('securityEnv', 'success');
+            } else {
+                const envText = envSection.textContent;
+                const sensitivePatterns = ['PASSWORD', 'SECRET', 'TOKEN', 'API_KEY', 'PRIVATE_KEY', 'CREDENTIAL', 'AUTH'];
+                const found = sensitivePatterns.filter(p => envText.toUpperCase().includes(p));
+
+                if (found.length > 0) {
+                    envEl.textContent = found.length + ' potential secret(s)';
+                    setSecurityStatus('securityEnv', 'warning');
+                } else {
+                    envEl.textContent = 'None detected';
+                    setSecurityStatus('securityEnv', 'success');
+                }
+            }
+        }
+    }
 
     // Copy pull command to clipboard
     function copyPullCommand() {

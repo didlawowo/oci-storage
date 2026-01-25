@@ -387,6 +387,30 @@ func (s *ImageService) SaveImageIndex(name, reference string, manifestData []byt
 	// Calculate digest
 	digest := fmt.Sprintf("sha256:%x", sha256.Sum256(manifestData))
 
+	// Parse manifest list to extract platforms
+	var index models.OCIIndex
+	var platforms []models.PlatformInfo
+	var config *models.ImageConfig
+	var layers []models.LayerInfo
+
+	if err := json.Unmarshal(manifestData, &index); err == nil {
+		// Extract platforms from manifest list
+		// Filter out attestation manifests (unknown/unknown) which are signatures, SBOMs, etc.
+		for _, m := range index.Manifests {
+			if m.Platform != nil && m.Platform.OS != "unknown" && m.Platform.Architecture != "unknown" {
+				platforms = append(platforms, models.PlatformInfo{
+					OS:           m.Platform.OS,
+					Architecture: m.Platform.Architecture,
+					Variant:      m.Platform.Variant,
+					Digest:       m.Digest,
+				})
+			}
+		}
+
+		// Try to load config from the first platform manifest (prefer linux/amd64)
+		config, layers = s.loadConfigFromManifestList(index)
+	}
+
 	// Create/update metadata for the image list
 	metadata := &models.ImageMetadata{
 		Name:       name,
@@ -395,7 +419,9 @@ func (s *ImageService) SaveImageIndex(name, reference string, manifestData []byt
 		Digest:     digest,
 		Size:       totalSize,
 		Created:    time.Now(),
-		Layers:     []models.LayerInfo{}, // Manifest lists don't have direct layers
+		Platforms:  platforms,
+		Config:     config,
+		Layers:     layers,
 	}
 
 	// Save metadata to tags directory (this is what ListImages looks for)
@@ -409,13 +435,58 @@ func (s *ImageService) SaveImageIndex(name, reference string, manifestData []byt
 	}
 
 	s.log.WithFields(logrus.Fields{
-		"name":   name,
-		"tag":    reference,
-		"digest": digest,
-		"size":   totalSize,
+		"name":      name,
+		"tag":       reference,
+		"digest":    digest,
+		"size":      totalSize,
+		"platforms": len(platforms),
 	}).Info("Docker image index metadata saved successfully")
 
 	return nil
+}
+
+// loadConfigFromManifestList loads config and layers from a child manifest in a manifest list
+func (s *ImageService) loadConfigFromManifestList(index models.OCIIndex) (*models.ImageConfig, []models.LayerInfo) {
+	// Prefer linux/amd64, fall back to first available
+	var targetDigest string
+	for _, desc := range index.Manifests {
+		if desc.Platform != nil && desc.Platform.OS == "linux" && desc.Platform.Architecture == "amd64" {
+			targetDigest = desc.Digest
+			break
+		}
+	}
+	if targetDigest == "" && len(index.Manifests) > 0 {
+		targetDigest = index.Manifests[0].Digest
+	}
+	if targetDigest == "" {
+		return nil, nil
+	}
+
+	// Read the child manifest from local blob storage
+	blobPath := s.pathManager.GetBlobPath(targetDigest)
+	data, err := os.ReadFile(blobPath)
+	if err != nil {
+		s.log.WithError(err).WithField("digest", targetDigest).Debug("Could not read child manifest for config extraction")
+		return nil, nil
+	}
+
+	var childManifest models.OCIManifest
+	if err := json.Unmarshal(data, &childManifest); err != nil {
+		s.log.WithError(err).Debug("Could not parse child manifest for config extraction")
+		return nil, nil
+	}
+
+	// Extract layers
+	layers := s.extractLayerInfo(&childManifest)
+
+	// Try to extract config
+	config, err := s.extractConfigFromBlob(childManifest.Config.Digest)
+	if err != nil {
+		s.log.WithError(err).Debug("Could not extract config from child manifest")
+		return nil, layers
+	}
+
+	return config, layers
 }
 
 func (s *ImageService) findManifestByDigest(name, digest string) (*models.OCIManifest, error) {

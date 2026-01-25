@@ -3,7 +3,7 @@ persistentVolumesClaims:
   accessModes:
   - ReadWriteOnce
   storageClassName: longhorn
-  size: 30Gi
+  size: 70Gi
 
 ingress:
   host: oci-storage.dc-tech.work

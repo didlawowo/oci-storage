@@ -207,6 +207,21 @@ kyverno:
   # The hostname of the OCI portal (without protocol)
   # e.g., "oci-storage.example.com" or "oci-storage:3030"
   portalHost: "oci-storage.dc-tech.work"
+# Garbage collection CronJob configuration
+gc:
+  enabled: true
+  # Cron schedule (default: daily at 3am)
+  schedule: "0 3 * * *"
+  # Run in dry-run mode (only report, don't delete)
+  dryRun: false
+  # Job history limits
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  # Authentication for GC endpoint (if required)
+  auth:
+    enabled: false
+    username: ""
+    password: ""
 config:
   server:
     port: 3030
