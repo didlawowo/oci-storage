@@ -1,0 +1,56 @@
+{{- if .Values.gc.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "oci-storage.fullname" . }}-gc
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "oci-storage.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gc
+spec:
+  schedule: {{ .Values.gc.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: {{ .Values.gc.successfulJobsHistoryLimit | default 3 }}
+  failedJobsHistoryLimit: {{ .Values.gc.failedJobsHistoryLimit | default 1 }}
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            {{- include "oci-storage.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: gc
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: gc
+              image: curlimages/curl:latest
+              imagePullPolicy: IfNotPresent
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  echo "Starting garbage collection..."
+                  RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+                    {{- if .Values.gc.auth.enabled }}
+                    -u "{{ .Values.gc.auth.username }}:{{ .Values.gc.auth.password }}" \
+                    {{- end }}
+                    "http://{{ include "oci-storage.fullname" . }}.{{ .Values.namespace }}.svc:{{ .Values.service.port }}/gc{{ if .Values.gc.dryRun }}?dryRun=true{{ end }}")
+                  HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+                  BODY=$(echo "$RESPONSE" | head -n -1)
+                  echo "Response: $BODY"
+                  echo "HTTP Status: $HTTP_CODE"
+                  if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+                    echo "Garbage collection completed successfully"
+                    exit 0
+                  else
+                    echo "Garbage collection failed with status $HTTP_CODE"
+                    exit 1
+                  fi
+              resources:
+                limits:
+                  cpu: 100m
+                  memory: 64Mi
+                requests:
+                  cpu: 50m
+                  memory: 32Mi
+{{- end }}

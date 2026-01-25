@@ -5,14 +5,23 @@ import "time"
 
 // ImageMetadata represents Docker image metadata
 type ImageMetadata struct {
-	Name       string       `json:"name"`
-	Repository string       `json:"repository"`
-	Tag        string       `json:"tag"`
-	Digest     string       `json:"digest"`
-	Size       int64        `json:"size"`
-	Created    time.Time    `json:"created"`
-	Config     *ImageConfig `json:"config,omitempty"`
-	Layers     []LayerInfo  `json:"layers,omitempty"`
+	Name       string         `json:"name"`
+	Repository string         `json:"repository"`
+	Tag        string         `json:"tag"`
+	Digest     string         `json:"digest"`
+	Size       int64          `json:"size"`
+	Created    time.Time      `json:"created"`
+	Config     *ImageConfig   `json:"config,omitempty"`
+	Layers     []LayerInfo    `json:"layers,omitempty"`
+	Platforms  []PlatformInfo `json:"platforms,omitempty"` // Available platforms for multi-arch images
+}
+
+// PlatformInfo represents a platform in a multi-arch image
+type PlatformInfo struct {
+	OS           string `json:"os"`
+	Architecture string `json:"architecture"`
+	Variant      string `json:"variant,omitempty"`
+	Digest       string `json:"digest,omitempty"`
 }
 
 // ImageConfig represents the configuration of a Docker image

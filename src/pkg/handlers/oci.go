@@ -600,11 +600,9 @@ func (h *OCIHandler) PutManifest(c *fiber.Ctx) error {
 		if h.imageService != nil {
 			var index models.OCIIndex
 			if err := json.Unmarshal(manifestData, &index); err == nil {
-				// Calculate approximate total size from manifest descriptors
-				var totalSize int64
-				for _, m := range index.Manifests {
-					totalSize += m.Size
-				}
+				// Calculate total size by fetching a child manifest and summing its layers
+				// m.Size in manifest list is just the manifest size (~1KB), not the image size
+				totalSize := h.calculateManifestListSizeFromBlobs(index)
 				if err := h.imageService.SaveImageIndex(name, reference, manifestData, totalSize); err != nil {
 					h.log.WithFunc().WithError(err).Warn("Failed to save manifest list metadata")
 				}
@@ -735,4 +733,39 @@ func (h *OCIHandler) saveManifestFile(manifestPath string, data []byte) error {
 	}
 
 	return nil
+}
+
+// calculateManifestListSizeFromBlobs calculates the real size of a manifest list
+// by reading a child manifest from local blobs and summing its layers
+func (h *OCIHandler) calculateManifestListSizeFromBlobs(index models.OCIIndex) int64 {
+	// Prefer linux/amd64, fall back to first available
+	var targetDigest string
+	for _, desc := range index.Manifests {
+		if desc.Platform != nil && desc.Platform.OS == "linux" && desc.Platform.Architecture == "amd64" {
+			targetDigest = desc.Digest
+			break
+		}
+	}
+	if targetDigest == "" && len(index.Manifests) > 0 {
+		targetDigest = index.Manifests[0].Digest
+	}
+	if targetDigest == "" {
+		return 0
+	}
+
+	// Read the child manifest from local blob storage
+	blobPath := h.pathManager.GetBlobPath(targetDigest)
+	data, err := os.ReadFile(blobPath)
+	if err != nil {
+		h.log.WithError(err).WithField("digest", targetDigest).Debug("Could not read child manifest for size calculation")
+		return 0
+	}
+
+	var childManifest models.OCIManifest
+	if err := json.Unmarshal(data, &childManifest); err != nil {
+		h.log.WithError(err).Debug("Could not parse child manifest for size calculation")
+		return 0
+	}
+
+	return childManifest.GetTotalSize()
 }
