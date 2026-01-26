@@ -10,11 +10,15 @@ spec:
   replicas: {{ .Values.replicas }}
   {{- end }}
   selector:
-    matchLabels: {{- include "application.selectorLabels" . | nindent 6 }}
+    matchLabels:
+      {{- include "application.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: server
   strategy: {{ toYaml .Values.strategy | nindent 4 }}
   template:
     metadata:
-      labels: {{- include "application.labels" . | nindent 8 }}
+      labels:
+        {{- include "application.labels" . | nindent 8 }}
+        app.kubernetes.io/component: server
       annotations:
         # Trigger pod restart when configmap or secrets change
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
