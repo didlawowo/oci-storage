@@ -13,5 +13,7 @@ spec:
   maxUnavailable: {{ .Values.pdb.maxUnavailable }}
   {{- end }}
   selector:
-    matchLabels: {{- include "application.selectorLabels" . | nindent 6 }}
+    matchLabels:
+      {{- include "application.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: server
 {{- end }}
