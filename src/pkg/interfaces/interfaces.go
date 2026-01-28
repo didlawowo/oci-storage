@@ -55,6 +55,28 @@ type IndexServiceInterface interface {
 	EnsureIndexExists() error
 }
 
+// ScanServiceInterface handles Trivy vulnerability scanning and security gate decisions
+type ScanServiceInterface interface {
+	// ScanImage triggers a vulnerability scan for the given image
+	ScanImage(name, ref, digest string)
+	// GetScanResult returns the scan result for a given digest
+	GetScanResult(digest string) (*models.ScanResult, error)
+	// GetDecision returns the security gate decision for a given digest
+	GetDecision(digest string) (*models.ScanDecision, error)
+	// SetDecision sets the security gate decision for a given digest
+	SetDecision(digest, status, reason, decidedBy string, expiresInDays int) error
+	// ListPendingDecisions returns all images awaiting review
+	ListPendingDecisions() ([]models.ScanDecision, error)
+	// ListAllDecisions returns all decisions
+	ListAllDecisions() ([]models.ScanDecision, error)
+	// DeleteDecision removes a decision, forcing re-review
+	DeleteDecision(digest string) error
+	// GetSummary returns aggregate scan statistics
+	GetSummary() (*models.ScanSummary, error)
+	// IsEnabled returns whether scanning is enabled
+	IsEnabled() bool
+}
+
 // ProxyServiceInterface handles Docker registry proxying and caching
 type ProxyServiceInterface interface {
 	// ResolveRegistry parses an image path and determines the upstream registry

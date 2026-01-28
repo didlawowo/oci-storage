@@ -30,7 +30,7 @@ affinity: {}
 initContainers:
   - name: init-data-dir
     image: busybox
-    command: ["sh", "-c", "mkdir -p /app/data/temp /app/data/blobs /app/data/manifests /app/data/charts &&  chown -R 1000:1000 /app/data"]
+    command: ["sh", "-c", "mkdir -p /app/data/temp /app/data/blobs /app/data/manifests /app/data/charts /app/data/scan-results /app/data/scan-decisions && chown -R 1000:1000 /app/data"]
     volumeMounts:
       - name: data-volume
         mountPath: /app/data
@@ -222,6 +222,25 @@ gc:
     enabled: false
     username: ""
     password: ""
+# Trivy vulnerability scanner sidecar
+trivy:
+  enabled: false
+  image:
+    repository: aquasec/trivy
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+  # Persistent volume for Trivy DB cache (avoids re-downloading on restart)
+  dbVolume:
+    enabled: true
+    size: 2Gi
+    storageClassName: longhorn
 config:
   server:
     port: 3030
@@ -269,3 +288,16 @@ config:
         url: "https://nvcr.io"
       - name: "code.forgejo.org"
         url: "https://code.forgejo.org"
+  # Trivy vulnerability scanner
+  trivy:
+    enabled: false
+    serverURL: "http://localhost:4954"
+    policy:
+      blockOnPull: true
+      mode: "warn"
+      maxCritical: 0
+      maxHigh: 5
+      maxTotal: 50
+      allowlist: []
+      exemptImages: []
+      ttlHours: 24

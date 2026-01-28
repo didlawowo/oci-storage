@@ -87,6 +87,9 @@ func (s *IndexService) UpdateIndex() error {
 
 	// Lire le répertoire des charts
 	chartsDir := s.pathManager.GetChartsPath()
+	if err := os.MkdirAll(chartsDir, 0755); err != nil {
+		return fmt.Errorf("❌ erreur création répertoire charts: %w", err)
+	}
 	files, err := os.ReadDir(chartsDir)
 	if err != nil {
 		return fmt.Errorf("❌ erreur lecture répertoire charts: %w", err)

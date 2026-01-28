@@ -34,6 +34,7 @@ type OCIHandler struct {
 	chartService interfaces.ChartServiceInterface
 	imageService interfaces.ImageServiceInterface
 	proxyService interfaces.ProxyServiceInterface
+	scanService  interfaces.ScanServiceInterface
 	pathManager  *utils.PathManager
 	config       *config.Config
 }
@@ -42,6 +43,7 @@ func NewOCIHandler(
 	chartService interfaces.ChartServiceInterface,
 	imageService interfaces.ImageServiceInterface,
 	proxyService interfaces.ProxyServiceInterface,
+	scanService interfaces.ScanServiceInterface,
 	cfg *config.Config,
 	log *utils.Logger,
 ) *OCIHandler {
@@ -49,6 +51,7 @@ func NewOCIHandler(
 		chartService: chartService,
 		imageService: imageService,
 		proxyService: proxyService,
+		scanService:  scanService,
 		config:       cfg,
 		log:          log,
 		pathManager:  chartService.GetPathManager(),
@@ -216,6 +219,11 @@ func (h *OCIHandler) HandleManifest(c *fiber.Ctx) error {
 			h.proxyService.UpdateAccessTime(normalizedName, reference)
 		}
 
+		// Security gate check: verify scan decision before serving manifest
+		if blocked, resp := h.checkScanGate(c, manifestData, normalizedName); blocked {
+			return resp
+		}
+
 		return h.sendManifestResponse(c, manifestData, reference)
 	}
 
@@ -245,6 +253,81 @@ func (h *OCIHandler) HandleManifest(c *fiber.Ctx) error {
 		return c.Status(404).Send(nil)
 	}
 	return c.SendStatus(404)
+}
+
+// checkScanGate verifies the scan decision for a manifest before serving it.
+// Returns (true, response) if the request should be blocked, (false, nil) otherwise.
+func (h *OCIHandler) checkScanGate(c *fiber.Ctx, manifestData []byte, name string) (bool, error) {
+	if h.scanService == nil || !h.scanService.IsEnabled() {
+		return false, nil
+	}
+
+	if !h.config.Trivy.Policy.BlockOnPull {
+		return false, nil
+	}
+
+	// Check exempt images
+	for _, exempt := range h.config.Trivy.Policy.ExemptImages {
+		if strings.HasPrefix(name, exempt) {
+			return false, nil
+		}
+	}
+
+	// Calculate digest from manifest data
+	digestBytes := sha256.Sum256(manifestData)
+	digest := fmt.Sprintf("sha256:%x", digestBytes)
+
+	decision, err := h.scanService.GetDecision(digest)
+	if err != nil {
+		// No decision yet — in warn mode, allow; in block mode, allow (scan may be pending)
+		return false, nil
+	}
+
+	mode := h.config.Trivy.Policy.Mode
+	if mode == "" {
+		mode = "warn"
+	}
+
+	switch decision.Status {
+	case "denied":
+		h.log.WithFunc().WithFields(logrus.Fields{
+			"digest": digest,
+			"name":   name,
+			"reason": decision.Reason,
+		}).Warn("Image pull denied by security gate")
+		return true, c.Status(403).JSON(fiber.Map{
+			"errors": []fiber.Map{{
+				"code":    "DENIED",
+				"message": fmt.Sprintf("Image denied by security policy: %s", decision.Reason),
+				"detail": fiber.Map{
+					"digest":     digest,
+					"scanReport": fmt.Sprintf("/api/scan/report/%s", strings.TrimPrefix(digest, "sha256:")),
+				},
+			}},
+		})
+
+	case "pending":
+		if mode == "block" {
+			h.log.WithFunc().WithFields(logrus.Fields{
+				"digest": digest,
+				"name":   name,
+			}).Warn("Image pull blocked: awaiting security review")
+			return true, c.Status(403).JSON(fiber.Map{
+				"errors": []fiber.Map{{
+					"code":    "DENIED",
+					"message": "Image awaiting security review",
+					"detail": fiber.Map{
+						"digest":     digest,
+						"scanReport": fmt.Sprintf("/api/scan/report/%s", strings.TrimPrefix(digest, "sha256:")),
+					},
+				}},
+			})
+		}
+		// warn mode: add header but allow
+		c.Set("X-Trivy-Warning", "Image has pending security review")
+	}
+
+	return false, nil
 }
 
 // findManifest searches for a manifest in all possible locations
@@ -670,6 +753,13 @@ func (h *OCIHandler) PutManifest(c *fiber.Ctx) error {
 		"digest":    digestStr,
 		"size":      len(manifestData),
 	}).Info("Manifest saved successfully")
+
+	// Trigger async vulnerability scan if enabled
+	// Only scan when the reference is a proper tag (not a digest or upload path)
+	if h.scanService != nil && h.scanService.IsEnabled() &&
+		!strings.HasPrefix(reference, "sha256:") && !strings.Contains(reference, "/") {
+		h.scanService.ScanImage(name, reference, digestStr)
+	}
 
 	return c.SendStatus(201)
 }

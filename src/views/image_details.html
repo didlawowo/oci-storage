@@ -66,6 +66,19 @@
             </div>
             {{end}}
 
+            <!-- Vulnerability Scan Results -->
+            <div class="mb-6" id="vulnScanSection" style="display: none;">
+                <h3 class="text-lg font-semibold mb-2 flex items-center gap-2">
+                    <i class="material-icons text-gray-600">bug_report</i>
+                    Vulnerability Scan
+                    <span id="vulnScanStatus" class="px-2 py-1 rounded-full text-xs font-medium"></span>
+                </h3>
+                <div id="vulnScanSummary" class="flex gap-3 mb-3"></div>
+                <div id="vulnScanDecision" class="mb-3 p-3 rounded-lg border"></div>
+                <div id="vulnScanActions" class="mb-3"></div>
+                <div id="vulnScanTable" class="max-h-64 overflow-y-auto"></div>
+            </div>
+
             <!-- Security Insights -->
             <div class="mb-6">
                 <h3 class="text-lg font-semibold mb-2 flex items-center gap-2">
@@ -143,7 +156,7 @@
                     <i class="material-icons text-gray-600">fingerprint</i>
                     Digest
                 </h3>
-                <div class="bg-gray-100 p-3 rounded-lg font-mono text-sm break-all">
+                <div id="imageDigest" class="bg-gray-100 p-3 rounded-lg font-mono text-sm break-all">
                     {{.Image.Digest}}
                 </div>
             </div>
@@ -377,7 +390,80 @@
 
         // Security Insights Analysis
         analyzeSecurityInsights();
+
+        // Load vulnerability scan if available
+        loadVulnScan();
     });
+
+    async function loadVulnScan() {
+        // Get digest from the dedicated digest element
+        const digestEl = document.getElementById('imageDigest');
+        if (!digestEl) return;
+        const fullDigest = digestEl.textContent.trim();
+        if (!fullDigest.startsWith('sha256:')) return;
+        const digestShort = fullDigest.replace('sha256:', '').substring(0, 64);
+
+        try {
+            const resp = await fetch(`/api/scan/report/${digestShort}`);
+            if (!resp.ok) return;
+            const data = await resp.json();
+            const sr = data.scanResult;
+            const decision = data.decision;
+            if (!sr) return;
+
+            const section = document.getElementById('vulnScanSection');
+            section.style.display = 'block';
+
+            // Status badge
+            const statusEl = document.getElementById('vulnScanStatus');
+            if (decision) {
+                const colors = { approved: 'bg-green-100 text-green-800', pending: 'bg-yellow-100 text-yellow-800', denied: 'bg-red-100 text-red-800' };
+                statusEl.className = `px-2 py-1 rounded-full text-xs font-medium ${colors[decision.status] || ''}`;
+                statusEl.textContent = decision.status.toUpperCase();
+            }
+
+            // Summary badges
+            document.getElementById('vulnScanSummary').innerHTML = `
+                <span class="bg-red-600 text-white px-3 py-1 rounded font-bold text-sm">${sr.critical} Critical</span>
+                <span class="bg-orange-500 text-white px-3 py-1 rounded font-bold text-sm">${sr.high} High</span>
+                <span class="bg-yellow-500 text-white px-3 py-1 rounded font-bold text-sm">${sr.medium} Medium</span>
+                <span class="bg-blue-400 text-white px-3 py-1 rounded font-bold text-sm">${sr.low} Low</span>
+                <span class="text-gray-500 text-sm ml-2">Scanned: ${new Date(sr.scannedAt).toLocaleString()}</span>
+            `;
+
+            // Decision info
+            if (decision) {
+                document.getElementById('vulnScanDecision').innerHTML = `
+                    <p class="text-sm"><strong>Decision:</strong> ${decision.status} by ${decision.decidedBy}</p>
+                    <p class="text-sm text-gray-600">${decision.reason || ''}</p>
+                    ${decision.expiresAt ? `<p class="text-xs text-gray-400">Expires: ${new Date(decision.expiresAt).toLocaleDateString()}</p>` : ''}
+                `;
+            }
+
+            // CVE table - sort by severity (CRITICAL first)
+            if (sr.vulnerabilities && sr.vulnerabilities.length > 0) {
+                const sevOrder = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
+                const sortedVulns = [...sr.vulnerabilities].sort((a, b) =>
+                    (sevOrder[a.severity.toUpperCase()] ?? 4) - (sevOrder[b.severity.toUpperCase()] ?? 4)
+                );
+
+                let tableHtml = `<table class="w-full text-sm"><thead class="bg-gray-50"><tr>
+                    <th class="px-2 py-1 text-left">CVE</th><th class="px-2 py-1 text-left">Severity</th>
+                    <th class="px-2 py-1 text-left">Package</th><th class="px-2 py-1 text-left">Fixed In</th>
+                </tr></thead><tbody class="divide-y">`;
+                sortedVulns.slice(0, 50).forEach(v => {
+                    const sevColors = { CRITICAL: 'bg-red-100 text-red-800', HIGH: 'bg-orange-100 text-orange-800', MEDIUM: 'bg-yellow-100 text-yellow-800', LOW: 'bg-blue-100 text-blue-800' };
+                    const link = v.link ? `<a href="${v.link}" target="_blank" class="text-blue-600 hover:underline">${v.id}</a>` : v.id;
+                    tableHtml += `<tr><td class="px-2 py-1">${link}</td><td class="px-2 py-1"><span class="px-1.5 py-0.5 rounded text-xs ${sevColors[v.severity.toUpperCase()] || ''}">${v.severity}</span></td><td class="px-2 py-1">${v.package}@${v.version}</td><td class="px-2 py-1">${v.fixedIn || '-'}</td></tr>`;
+                });
+                tableHtml += '</tbody></table>';
+                if (sr.vulnerabilities.length > 50) tableHtml += `<p class="text-xs text-gray-400 mt-2">Showing 50 of ${sr.vulnerabilities.length} vulnerabilities</p>`;
+                document.getElementById('vulnScanTable').innerHTML = tableHtml;
+            }
+        } catch (e) {
+            // Scan not available, keep section hidden
+        }
+    }
 
     // Security color helpers
     function setSecurityStatus(elementId, status) {

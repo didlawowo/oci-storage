@@ -1,0 +1,15 @@
+{{- if and .Values.trivy.enabled .Values.trivy.dbVolume.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: oci-storage-trivy-db
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "application.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: {{ .Values.trivy.dbVolume.storageClassName }}
+  resources:
+    requests:
+      storage: {{ .Values.trivy.dbVolume.size }}
+{{- end }}

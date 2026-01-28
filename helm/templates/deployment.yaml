@@ -78,8 +78,50 @@ spec:
             successThreshold: {{ .successThreshold }}
             failureThreshold: {{ .failureThreshold }}
           {{- end }}
+        {{- if .Values.trivy.enabled }}
+        - name: trivy
+          image: {{ .Values.trivy.image.repository }}:{{ .Values.trivy.image.tag }}
+          imagePullPolicy: {{ .Values.trivy.image.pullPolicy }}
+          command:
+            - trivy
+            - server
+            - --listen
+            - "0.0.0.0:4954"
+          ports:
+            - name: trivy
+              containerPort: 4954
+              protocol: TCP
+          {{- with .Values.trivy.resources }}
+          resources: {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: data-volume
+              mountPath: /app/data
+              readOnly: true
+            {{- if .Values.trivy.dbVolume.enabled }}
+            - name: trivy-db
+              mountPath: /root/.cache
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 4954
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 4954
+            initialDelaySeconds: 15
+            periodSeconds: 10
+        {{- end }}
       {{- with .Values.volumes }}
       volumes: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if and .Values.trivy.enabled .Values.trivy.dbVolume.enabled }}
+        - name: trivy-db
+          persistentVolumeClaim:
+            claimName: oci-storage-trivy-db
       {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector: {{- toYaml . | nindent 8 }}

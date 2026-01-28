@@ -29,6 +29,10 @@
                     <button onclick="showTab('images')" id="imagesTab" class="tab-btn px-4 py-2 rounded hover:bg-blue-700">
                         <i class="material-icons align-middle mr-1">inventory_2</i> Docker Images
                     </button>
+                    <button onclick="showTab('security')" id="securityTab" class="tab-btn px-4 py-2 rounded hover:bg-blue-700">
+                        <i class="material-icons align-middle mr-1">security</i> Security Gate
+                        <span id="pendingBadge" class="hidden ml-1 bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full">0</span>
+                    </button>
                 </div>
 
                 <!-- Backup button -->
@@ -207,6 +211,100 @@
                 <p class="text-gray-500 mt-2">Pull via proxy: <code id="proxyPullExample" class="bg-gray-200 px-2 py-1 rounded">docker pull <span class="portal-host"></span>/proxy/docker.io/alpine:latest</code></p>
                 <p class="text-gray-500 mt-1">Or push directly: <code class="bg-gray-200 px-2 py-1 rounded">docker push <span class="portal-host"></span>/myimage:tag</code></p>
             </div>
+        </div>
+
+        <!-- Security Gate Section -->
+        <div id="securitySection" style="display: none;">
+            <!-- Summary Bar -->
+            <div id="scanSummaryBar" class="mb-6 p-4 bg-gradient-to-r from-red-50 to-orange-50 rounded-lg border border-red-200">
+                <div class="flex justify-between items-center">
+                    <div class="flex items-center gap-4">
+                        <div class="flex items-center gap-2">
+                            <i class="material-icons text-red-600">shield</i>
+                            <span class="font-semibold text-gray-700">Security Overview</span>
+                        </div>
+                        <div class="flex gap-3 text-sm">
+                            <span id="summaryPending" class="bg-yellow-100 text-yellow-800 px-2 py-1 rounded">0 Pending</span>
+                            <span id="summaryApproved" class="bg-green-100 text-green-800 px-2 py-1 rounded">0 Approved</span>
+                            <span id="summaryDenied" class="bg-red-100 text-red-800 px-2 py-1 rounded">0 Denied</span>
+                        </div>
+                    </div>
+                    <div class="flex gap-3 text-sm">
+                        <span id="summaryCritical" class="bg-red-600 text-white px-2 py-1 rounded">0 Critical</span>
+                        <span id="summaryHigh" class="bg-orange-500 text-white px-2 py-1 rounded">0 High</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Filter tabs for security -->
+            <div class="mb-4 flex gap-2">
+                <button onclick="filterScanDecisions('pending')" id="scanFilterPending" class="scan-filter-btn px-3 py-1.5 text-sm rounded-full bg-yellow-500 text-white">
+                    Pending Review
+                </button>
+                <button onclick="filterScanDecisions('all')" id="scanFilterAll" class="scan-filter-btn px-3 py-1.5 text-sm rounded-full bg-gray-200 text-gray-700 hover:bg-gray-300">
+                    All Decisions
+                </button>
+            </div>
+
+            <!-- Decisions Table -->
+            <div id="scanDecisionsContainer" class="bg-white rounded-lg shadow-md overflow-hidden">
+                <table class="w-full">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Image</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Tag</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">CVEs</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Decided By</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="scanDecisionsBody" class="divide-y divide-gray-200">
+                        <!-- Populated by JavaScript -->
+                    </tbody>
+                </table>
+            </div>
+
+            <div id="noScanResults" class="flex flex-col items-center justify-center py-12" style="display: none;">
+                <i class="material-icons text-gray-400 text-6xl mb-4">verified_user</i>
+                <h2 class="text-2xl font-bold text-gray-600">No Scan Results</h2>
+                <p class="text-gray-500 mt-2">Vulnerability scanning results will appear here when Trivy is enabled.</p>
+            </div>
+        </div>
+
+        <!-- Scan Detail Modal -->
+        <div id="scanDetailModal" class="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center hidden z-50" style="display: none;">
+            <div class="bg-white rounded-lg shadow-xl p-6 max-w-3xl w-full max-h-[80vh] overflow-y-auto">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-lg font-bold text-gray-800">Vulnerability Report</h3>
+                    <button onclick="closeScanModal()" class="text-gray-500 hover:text-gray-700">
+                        <i class="material-icons">close</i>
+                    </button>
+                </div>
+                <div id="scanDetailContent" class="mb-4"></div>
+                <div id="scanDetailActions" class="flex gap-2 justify-end border-t pt-4"></div>
+            </div>
+        </div>
+
+        <!-- Approve/Deny Confirmation Modal -->
+        <div id="scanConfirmModal" class="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center hidden z-50" style="display: none;">
+            <div class="bg-white rounded-lg shadow-xl p-6 max-w-md w-full">
+                <h3 id="scanConfirmTitle" class="text-lg font-bold mb-4"></h3>
+                <div class="mb-4">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Reason</label>
+                    <textarea id="scanConfirmReason" class="w-full border rounded px-3 py-2 text-sm" rows="3" placeholder="Enter reason for this decision..."></textarea>
+                </div>
+                <div id="scanConfirmExpiry" class="mb-4 hidden">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Expires in (days, 0 = never)</label>
+                    <input id="scanConfirmExpiryDays" type="number" value="0" min="0" class="border rounded px-3 py-2 text-sm w-24">
+                </div>
+                <div class="flex gap-2 justify-end">
+                    <button onclick="closeScanConfirmModal()" class="px-4 py-2 bg-gray-200 rounded hover:bg-gray-300 text-sm">Cancel</button>
+                    <button id="scanConfirmBtn" class="px-4 py-2 rounded text-white text-sm">Confirm</button>
+                </div>
+            </div>
+        </div>
         </div>
     </main>
 
