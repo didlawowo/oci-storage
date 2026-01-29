@@ -4,7 +4,7 @@ podAnnotations:
   oci-portal-skip: "true"
 image:
   repository: fizzbuzz2/oci-storage
-  tag: "4faeca8"
+  tag: "e931a7a"
   pullPolicy: "Always"
   pullSecrets: []
 strategy:
