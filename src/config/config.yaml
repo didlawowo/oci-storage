@@ -24,10 +24,10 @@ proxy:
   cache:
     maxSizeGB: 10
   timeout:
-    blobBaseSeconds: 60      # Base timeout for blob operations
-    blobPerGBSeconds: 120    # Additional seconds per GB (e.g., 2GB blob = 60 + 240 = 300s)
-    manifestSeconds: 30      # Timeout for manifest operations
-    maxTimeoutMinutes: 30    # Maximum timeout cap (30 min)
+    blobBaseSeconds: 60 # Base timeout for blob operations
+    blobPerGBSeconds: 120 # Additional seconds per GB (e.g., 2GB blob = 60 + 240 = 300s)
+    manifestSeconds: 30 # Timeout for manifest operations
+    maxTimeoutMinutes: 30 # Maximum timeout cap (30 min)
   registries:
   - name: "docker.io"
     url: "https://registry-1.docker.io"
@@ -38,3 +38,17 @@ proxy:
     url: "https://gcr.io"
   - name: "quay.io"
     url: "https://quay.io"
+
+# Trivy vulnerability scanner configuration
+trivy:
+  enabled: true
+  serverURL: "http://localhost:4954"
+  policy:
+    blockOnPull: true
+    mode: "warn" # warn = allow with header, block = 403 if pending/denied
+    maxCritical: 0 # 0 = no critical CVEs tolerated
+    maxHigh: 0 # 0 = disabled (no limit on HIGH)
+    maxTotal: 0 # 0 = disabled (no limit on total)
+    allowlist: [] # CVE IDs to ignore (e.g., CVE-2023-12345)
+    exemptImages: [] # Image prefixes never blocked (e.g., proxy/docker.io/library/alpine)
+    ttlHours: 24 # Re-scan after this many hours

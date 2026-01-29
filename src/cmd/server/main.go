@@ -15,7 +15,7 @@ import (
 )
 
 // setupServices initialise et configure tous les services
-func setupServices(cfg *config.Config, log *utils.Logger) (interfaces.ChartServiceInterface, interfaces.ImageServiceInterface, interfaces.IndexServiceInterface, interfaces.ProxyServiceInterface, *service.BackupService) {
+func setupServices(cfg *config.Config, log *utils.Logger) (interfaces.ChartServiceInterface, interfaces.ImageServiceInterface, interfaces.IndexServiceInterface, interfaces.ProxyServiceInterface, *service.BackupService, interfaces.ScanServiceInterface) {
 
 	tmpChartService := service.NewChartService(cfg, log, nil)
 	indexService := service.NewIndexService(cfg, log, tmpChartService)
@@ -33,7 +33,15 @@ func setupServices(cfg *config.Config, log *utils.Logger) (interfaces.ChartServi
 		log.Info("Proxy/cache service enabled")
 	}
 
-	return finalChartService, imageService, indexService, proxyService, backupService
+	// Initialize scan service if enabled
+	var scanService interfaces.ScanServiceInterface
+	if cfg.Trivy.Enabled {
+		pathManager := finalChartService.GetPathManager()
+		scanService = service.NewScanService(cfg, log, pathManager)
+		log.Info("Trivy scan service enabled")
+	}
+
+	return finalChartService, imageService, indexService, proxyService, backupService, scanService
 }
 
 // setupHandlers initialise tous les handlers
@@ -42,15 +50,16 @@ func setupHandlers(
 	imageService interfaces.ImageServiceInterface,
 	_ interfaces.IndexServiceInterface,
 	proxyService interfaces.ProxyServiceInterface,
+	scanService interfaces.ScanServiceInterface,
 	pathManager *utils.PathManager,
 	cfg *config.Config,
 	backupService *service.BackupService,
 	log *utils.Logger,
 
-) (*handlers.HelmHandler, *handlers.ImageHandler, *handlers.OCIHandler, *handlers.ConfigHandler, *handlers.IndexHandler, *handlers.BackupHandler, *handlers.CacheHandler, *handlers.GCHandler) {
+) (*handlers.HelmHandler, *handlers.ImageHandler, *handlers.OCIHandler, *handlers.ConfigHandler, *handlers.IndexHandler, *handlers.BackupHandler, *handlers.CacheHandler, *handlers.GCHandler, *handlers.ScanHandler) {
 	helmHandler := handlers.NewHelmHandler(chartService, pathManager, log)
 	imageHandler := handlers.NewImageHandler(imageService, proxyService, pathManager, log)
-	ociHandler := handlers.NewOCIHandler(chartService, imageService, proxyService, cfg, log)
+	ociHandler := handlers.NewOCIHandler(chartService, imageService, proxyService, scanService, cfg, log)
 	configHandler := handlers.NewConfigHandler(cfg, log)
 	indexHandler := handlers.NewIndexHandler(chartService, pathManager, log)
 	backupHandler := handlers.NewBackupHandler(backupService, log, cfg)
@@ -66,7 +75,13 @@ func setupHandlers(
 		}
 	}
 
-	return helmHandler, imageHandler, ociHandler, configHandler, indexHandler, backupHandler, cacheHandler, gcHandler
+	// Scan handler
+	var scanHandler *handlers.ScanHandler
+	if scanService != nil {
+		scanHandler = handlers.NewScanHandler(scanService, log)
+	}
+
+	return helmHandler, imageHandler, ociHandler, configHandler, indexHandler, backupHandler, cacheHandler, gcHandler, scanHandler
 }
 
 func setupHTTPServer(app *fiber.App, log *utils.Logger) {
@@ -115,14 +130,15 @@ func main() {
 	pathManager := utils.NewPathManager(cfg.Storage.Path, log)
 
 	// Services
-	chartService, imageService, indexService, proxyService, backupService := setupServices(cfg, log)
+	chartService, imageService, indexService, proxyService, backupService, scanService := setupServices(cfg, log)
 
 	// Handlers
-	helmHandler, imageHandler, ociHandler, configHandler, indexHandler, backupHandler, cacheHandler, gcHandler := setupHandlers(
+	helmHandler, imageHandler, ociHandler, configHandler, indexHandler, backupHandler, cacheHandler, gcHandler, scanHandler := setupHandlers(
 		chartService,
 		imageService,
 		indexService,
 		proxyService,
+		scanService,
 		pathManager,
 		cfg,
 		backupService,
@@ -225,6 +241,17 @@ func main() {
 	if gcHandler != nil {
 		app.Post("/gc", gcHandler.RunGC)
 		app.Get("/gc/stats", gcHandler.GetStats)
+	}
+
+	// Scan / Security Gate routes
+	if scanHandler != nil {
+		app.Get("/api/scan/pending", scanHandler.GetPending)
+		app.Get("/api/scan/summary", scanHandler.GetSummary)
+		app.Get("/api/scan/all", scanHandler.ListAll)
+		app.Get("/api/scan/report/:digest", scanHandler.GetReport)
+		app.Post("/api/scan/approve/:digest", scanHandler.Approve)
+		app.Post("/api/scan/deny/:digest", scanHandler.Deny)
+		app.Delete("/api/scan/decision/:digest", scanHandler.DeleteDecision)
 	}
 
 	// Routes OCI - support nested paths like charts/myapp or images/myapp

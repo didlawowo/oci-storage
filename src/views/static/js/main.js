@@ -252,27 +252,38 @@ function showTab(tab) {
 
   const chartsSection = document.getElementById("chartsSection");
   const imagesSection = document.getElementById("imagesSection");
+  const securitySection = document.getElementById("securitySection");
   const chartsTab = document.getElementById("chartsTab");
   const imagesTab = document.getElementById("imagesTab");
+  const securityTab = document.getElementById("securityTab");
   const uploadForm = document.getElementById("uploadForm");
+
+  // Hide all sections
+  chartsSection.style.display = "none";
+  imagesSection.style.display = "none";
+  if (securitySection) securitySection.style.display = "none";
+
+  // Deactivate all tabs
+  chartsTab.classList.remove("active", "bg-blue-700");
+  imagesTab.classList.remove("active", "bg-blue-700");
+  if (securityTab) securityTab.classList.remove("active", "bg-blue-700");
+
+  if (uploadForm) uploadForm.style.display = "none";
 
   if (tab === "charts") {
     chartsSection.style.display = "block";
-    imagesSection.style.display = "none";
     chartsTab.classList.add("active", "bg-blue-700");
-    imagesTab.classList.remove("active", "bg-blue-700");
-    // Show upload form only on charts tab
     if (uploadForm) uploadForm.style.display = "flex";
-  } else {
-    chartsSection.style.display = "none";
+  } else if (tab === "images") {
     imagesSection.style.display = "block";
-    chartsTab.classList.remove("active", "bg-blue-700");
     imagesTab.classList.add("active", "bg-blue-700");
-    // Hide upload form on images tab
-    if (uploadForm) uploadForm.style.display = "none";
-    // Load images and cache status when switching to images tab
     loadDockerImages();
     loadCacheStatus();
+  } else if (tab === "security") {
+    if (securitySection) securitySection.style.display = "block";
+    if (securityTab) securityTab.classList.add("active", "bg-blue-700");
+    loadScanSummary();
+    loadScanDecisions("pending");
   }
 }
 
@@ -992,4 +1003,355 @@ document.addEventListener("DOMContentLoaded", function () {
       console.error(`Error loading versions for ${chartName}:`, error);
     }
   });
+
+  // Load pending scan badge count
+  loadPendingBadge();
 });
+
+// =============================================
+// Security Gate Functions
+// =============================================
+
+let currentScanFilter = "pending";
+let allScanDecisions = [];
+let scanConfirmCallback = null;
+
+async function loadPendingBadge() {
+  try {
+    const resp = await fetch("/api/scan/summary");
+    if (!resp.ok) return;
+    const summary = await resp.json();
+    const badge = document.getElementById("pendingBadge");
+    if (badge && summary.pending > 0) {
+      badge.textContent = summary.pending;
+      badge.classList.remove("hidden");
+    }
+  } catch (e) {
+    // Trivy not enabled, ignore
+  }
+}
+
+async function loadScanSummary() {
+  try {
+    const resp = await fetch("/api/scan/summary");
+    if (!resp.ok) return;
+    const s = await resp.json();
+
+    const el = (id, text) => { const e = document.getElementById(id); if (e) e.textContent = text; };
+    el("summaryPending", s.pending + " Pending");
+    el("summaryApproved", s.approved + " Approved");
+    el("summaryDenied", s.denied + " Denied");
+    el("summaryCritical", s.critical + " Critical");
+    el("summaryHigh", s.high + " High");
+  } catch (e) {
+    console.error("Failed to load scan summary:", e);
+  }
+}
+
+async function loadScanDecisions(filter) {
+  currentScanFilter = filter;
+  try {
+    const url = filter === "pending" ? "/api/scan/pending" : "/api/scan/all";
+    const resp = await fetch(url);
+    if (!resp.ok) {
+      document.getElementById("noScanResults").style.display = "flex";
+      document.getElementById("scanDecisionsContainer").style.display = "none";
+      return;
+    }
+    allScanDecisions = await resp.json();
+
+    // Update filter button styles
+    document.querySelectorAll(".scan-filter-btn").forEach(btn => {
+      btn.classList.remove("bg-yellow-500", "text-white");
+      btn.classList.add("bg-gray-200", "text-gray-700");
+    });
+    const activeBtn = filter === "pending" ? document.getElementById("scanFilterPending") : document.getElementById("scanFilterAll");
+    if (activeBtn) {
+      activeBtn.classList.remove("bg-gray-200", "text-gray-700");
+      activeBtn.classList.add("bg-yellow-500", "text-white");
+    }
+
+    renderScanDecisions(allScanDecisions);
+  } catch (e) {
+    console.error("Failed to load scan decisions:", e);
+  }
+}
+
+function filterScanDecisions(filter) {
+  loadScanDecisions(filter);
+}
+
+function renderScanDecisions(decisions) {
+  const tbody = document.getElementById("scanDecisionsBody");
+  const noResults = document.getElementById("noScanResults");
+  const container = document.getElementById("scanDecisionsContainer");
+
+  if (!decisions || decisions.length === 0) {
+    noResults.style.display = "flex";
+    container.style.display = "none";
+    return;
+  }
+
+  noResults.style.display = "none";
+  container.style.display = "block";
+
+  tbody.innerHTML = decisions.map(d => {
+    const sr = d.scanResult || {};
+    const statusColors = {
+      pending: "bg-yellow-100 text-yellow-800",
+      approved: "bg-green-100 text-green-800",
+      denied: "bg-red-100 text-red-800"
+    };
+    const statusClass = statusColors[d.status] || "bg-gray-100 text-gray-800";
+    const digestFull = d.digest ? d.digest.replace("sha256:", "") : "";
+    const digestDisplay = digestFull.substring(0, 12);
+    const date = d.decidedAt ? new Date(d.decidedAt).toLocaleDateString() : "-";
+
+    let cveHtml = "";
+    if (sr.critical > 0) cveHtml += `<span class="bg-red-600 text-white text-xs px-1.5 py-0.5 rounded">${sr.critical}C</span> `;
+    if (sr.high > 0) cveHtml += `<span class="bg-orange-500 text-white text-xs px-1.5 py-0.5 rounded">${sr.high}H</span> `;
+    if (sr.medium > 0) cveHtml += `<span class="bg-yellow-500 text-white text-xs px-1.5 py-0.5 rounded">${sr.medium}M</span> `;
+    if (sr.low > 0) cveHtml += `<span class="bg-blue-400 text-white text-xs px-1.5 py-0.5 rounded">${sr.low}L</span>`;
+    if (!cveHtml) cveHtml = '<span class="text-gray-400 text-xs">No scan</span>';
+
+    let actionsHtml = "";
+    if (d.status === "pending") {
+      actionsHtml = `
+        <button onclick="showApproveModal('${digestFull}')" class="bg-green-500 text-white px-2 py-1 rounded text-xs hover:bg-green-600" title="Approve">
+          <i class="material-icons text-sm">check_circle</i>
+        </button>
+        <button onclick="showDenyModal('${digestFull}')" class="bg-red-500 text-white px-2 py-1 rounded text-xs hover:bg-red-600" title="Deny">
+          <i class="material-icons text-sm">block</i>
+        </button>
+      `;
+    } else {
+      actionsHtml = `
+        <button onclick="resetDecision('${digestFull}')" class="bg-gray-400 text-white px-2 py-1 rounded text-xs hover:bg-gray-500" title="Reset decision">
+          <i class="material-icons text-sm">refresh</i>
+        </button>
+      `;
+    }
+    actionsHtml += `
+      <button onclick="viewScanReport('${digestFull}')" class="bg-blue-500 text-white px-2 py-1 rounded text-xs hover:bg-blue-600" title="View report">
+        <i class="material-icons text-sm">description</i>
+      </button>
+    `;
+
+    return `<tr class="hover:bg-gray-50">
+      <td class="px-4 py-3 text-sm font-medium text-gray-900">${d.imageName || "-"}</td>
+      <td class="px-4 py-3 text-sm text-gray-600">${d.tag || "-"}</td>
+      <td class="px-4 py-3">${cveHtml}</td>
+      <td class="px-4 py-3"><span class="px-2 py-1 rounded-full text-xs font-medium ${statusClass}">${d.status}</span></td>
+      <td class="px-4 py-3 text-sm text-gray-600">${d.decidedBy || "-"}</td>
+      <td class="px-4 py-3 text-sm text-gray-600">${date}</td>
+      <td class="px-4 py-3"><div class="flex gap-1">${actionsHtml}</div></td>
+    </tr>`;
+  }).join("");
+}
+
+function showApproveModal(digestShort) {
+  const modal = document.getElementById("scanConfirmModal");
+  const title = document.getElementById("scanConfirmTitle");
+  const btn = document.getElementById("scanConfirmBtn");
+  const expiryDiv = document.getElementById("scanConfirmExpiry");
+
+  title.textContent = "Approve Image";
+  btn.textContent = "Approve";
+  btn.className = "px-4 py-2 rounded text-white text-sm bg-green-600 hover:bg-green-700";
+  expiryDiv.classList.remove("hidden");
+  document.getElementById("scanConfirmReason").value = "";
+  document.getElementById("scanConfirmExpiryDays").value = "0";
+
+  scanConfirmCallback = () => approveImage(digestShort);
+  modal.style.display = "flex";
+  modal.classList.remove("hidden");
+}
+
+function showDenyModal(digestShort) {
+  const modal = document.getElementById("scanConfirmModal");
+  const title = document.getElementById("scanConfirmTitle");
+  const btn = document.getElementById("scanConfirmBtn");
+  const expiryDiv = document.getElementById("scanConfirmExpiry");
+
+  title.textContent = "Deny Image";
+  btn.textContent = "Deny";
+  btn.className = "px-4 py-2 rounded text-white text-sm bg-red-600 hover:bg-red-700";
+  expiryDiv.classList.add("hidden");
+  document.getElementById("scanConfirmReason").value = "";
+
+  scanConfirmCallback = () => denyImage(digestShort);
+  modal.style.display = "flex";
+  modal.classList.remove("hidden");
+}
+
+function closeScanConfirmModal() {
+  const modal = document.getElementById("scanConfirmModal");
+  modal.style.display = "none";
+  modal.classList.add("hidden");
+  scanConfirmCallback = null;
+}
+
+// Wire up confirm button
+document.addEventListener("DOMContentLoaded", () => {
+  const confirmBtn = document.getElementById("scanConfirmBtn");
+  if (confirmBtn) {
+    confirmBtn.addEventListener("click", () => {
+      if (scanConfirmCallback) scanConfirmCallback();
+    });
+  }
+});
+
+async function approveImage(digestShort) {
+  const reason = document.getElementById("scanConfirmReason").value || "Approved by admin";
+  const expiresInDays = parseInt(document.getElementById("scanConfirmExpiryDays").value) || 0;
+
+  try {
+    const resp = await fetch(`/api/scan/approve/${digestShort}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reason, decidedBy: "admin", expiresInDays })
+    });
+    if (resp.ok) {
+      closeScanConfirmModal();
+      loadScanDecisions(currentScanFilter);
+      loadScanSummary();
+      loadPendingBadge();
+      showModal("Image approved successfully", false);
+    } else {
+      showModal("Failed to approve image");
+    }
+  } catch (e) {
+    showModal("Error approving image: " + e.message);
+  }
+}
+
+async function denyImage(digestShort) {
+  const reason = document.getElementById("scanConfirmReason").value || "Denied by admin";
+
+  try {
+    const resp = await fetch(`/api/scan/deny/${digestShort}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reason, decidedBy: "admin" })
+    });
+    if (resp.ok) {
+      closeScanConfirmModal();
+      loadScanDecisions(currentScanFilter);
+      loadScanSummary();
+      loadPendingBadge();
+      showModal("Image denied", false);
+    } else {
+      showModal("Failed to deny image");
+    }
+  } catch (e) {
+    showModal("Error denying image: " + e.message);
+  }
+}
+
+async function resetDecision(digestShort) {
+  if (!confirm("Reset this decision? The image will require re-review.")) return;
+
+  try {
+    const resp = await fetch(`/api/scan/decision/${digestShort}`, { method: "DELETE" });
+    if (resp.ok) {
+      loadScanDecisions(currentScanFilter);
+      loadScanSummary();
+      loadPendingBadge();
+    } else {
+      showModal("Failed to reset decision");
+    }
+  } catch (e) {
+    showModal("Error resetting decision: " + e.message);
+  }
+}
+
+async function viewScanReport(digestShort) {
+  try {
+    console.log("viewScanReport called with digest:", digestShort, "length:", digestShort.length);
+    const resp = await fetch(`/api/scan/report/${digestShort}`);
+    console.log("API response status:", resp.status);
+    if (!resp.ok) {
+      showModal("Scan report not found");
+      return;
+    }
+    const data = await resp.json();
+    const sr = data.scanResult;
+    const decision = data.decision;
+
+    const modal = document.getElementById("scanDetailModal");
+    const content = document.getElementById("scanDetailContent");
+    const actions = document.getElementById("scanDetailActions");
+
+    let html = `
+      <div class="mb-4">
+        <p class="text-sm text-gray-600">Image: <strong>${sr.imageName}:${sr.tag}</strong></p>
+        <p class="text-sm text-gray-600">Digest: <code class="bg-gray-100 px-1 rounded text-xs">${sr.digest}</code></p>
+        <p class="text-sm text-gray-600">Scanned: ${new Date(sr.scannedAt).toLocaleString()}</p>
+      </div>
+      <div class="flex gap-3 mb-4">
+        <span class="bg-red-600 text-white px-3 py-1 rounded font-bold">${sr.critical} Critical</span>
+        <span class="bg-orange-500 text-white px-3 py-1 rounded font-bold">${sr.high} High</span>
+        <span class="bg-yellow-500 text-white px-3 py-1 rounded font-bold">${sr.medium} Medium</span>
+        <span class="bg-blue-400 text-white px-3 py-1 rounded font-bold">${sr.low} Low</span>
+      </div>
+    `;
+
+    if (sr.vulnerabilities && sr.vulnerabilities.length > 0) {
+      html += `<div class="max-h-96 overflow-y-auto">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-50 sticky top-0">
+            <tr>
+              <th class="px-2 py-1 text-left">CVE</th>
+              <th class="px-2 py-1 text-left">Severity</th>
+              <th class="px-2 py-1 text-left">Package</th>
+              <th class="px-2 py-1 text-left">Version</th>
+              <th class="px-2 py-1 text-left">Fixed In</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y">`;
+
+      sr.vulnerabilities.forEach(v => {
+        const sevColors = {
+          CRITICAL: "bg-red-100 text-red-800",
+          HIGH: "bg-orange-100 text-orange-800",
+          MEDIUM: "bg-yellow-100 text-yellow-800",
+          LOW: "bg-blue-100 text-blue-800"
+        };
+        const sevClass = sevColors[v.severity.toUpperCase()] || "bg-gray-100";
+        const link = v.link ? `<a href="${v.link}" target="_blank" class="text-blue-600 hover:underline">${v.id}</a>` : v.id;
+        html += `<tr class="hover:bg-gray-50">
+          <td class="px-2 py-1">${link}</td>
+          <td class="px-2 py-1"><span class="px-1.5 py-0.5 rounded text-xs ${sevClass}">${v.severity}</span></td>
+          <td class="px-2 py-1">${v.package}</td>
+          <td class="px-2 py-1 text-xs">${v.version}</td>
+          <td class="px-2 py-1 text-xs">${v.fixedIn || "-"}</td>
+        </tr>`;
+      });
+
+      html += "</tbody></table></div>";
+    }
+
+    content.innerHTML = html;
+
+    // Actions
+    if (decision && decision.status === "pending") {
+      actions.innerHTML = `
+        <button onclick="closeScanModal(); showApproveModal('${digestShort}')" class="bg-green-600 text-white px-4 py-2 rounded text-sm hover:bg-green-700">Approve</button>
+        <button onclick="closeScanModal(); showDenyModal('${digestShort}')" class="bg-red-600 text-white px-4 py-2 rounded text-sm hover:bg-red-700">Deny</button>
+      `;
+    } else {
+      actions.innerHTML = `<button onclick="closeScanModal()" class="bg-gray-200 px-4 py-2 rounded text-sm hover:bg-gray-300">Close</button>`;
+    }
+
+    modal.style.display = "flex";
+    modal.classList.remove("hidden");
+  } catch (e) {
+    showModal("Error loading scan report: " + e.message);
+  }
+}
+
+function closeScanModal() {
+  const modal = document.getElementById("scanDetailModal");
+  modal.style.display = "none";
+  modal.classList.add("hidden");
+}

@@ -41,7 +41,7 @@ func setupProxyTestEnv(t *testing.T) (*fiber.App, *MockChartService, *MockImageS
 		},
 	}
 
-	handler := NewOCIHandler(mockChartService, mockImageService, mockProxyService, cfg, log)
+	handler := NewOCIHandler(mockChartService, mockImageService, mockProxyService, nil, cfg, log)
 	app := fiber.New()
 
 	cleanup := func() {

@@ -66,6 +66,25 @@ type ProxyConfig struct {
 	Registries []RegistryConfig `yaml:"registries"`
 }
 
+// TrivyPolicyConfig defines the security gate policy
+type TrivyPolicyConfig struct {
+	BlockOnPull  bool     `yaml:"blockOnPull"`
+	Mode         string   `yaml:"mode"` // block | warn
+	MaxCritical  int      `yaml:"maxCritical"`
+	MaxHigh      int      `yaml:"maxHigh"`
+	MaxTotal     int      `yaml:"maxTotal"`
+	Allowlist    []string `yaml:"allowlist"`
+	ExemptImages []string `yaml:"exemptImages"`
+	TTLHours     int      `yaml:"ttlHours"`
+}
+
+// TrivyConfig defines Trivy scanner integration settings
+type TrivyConfig struct {
+	Enabled   bool               `yaml:"enabled"`
+	ServerURL string             `yaml:"serverURL"`
+	Policy    TrivyPolicyConfig  `yaml:"policy"`
+}
+
 type Config struct {
 	Server struct {
 		Port int `yaml:"port"`
@@ -82,6 +101,7 @@ type Config struct {
 	Auth   AuthConfig  `yaml:"auth"`
 	Backup Backup      `yaml:"backup"`
 	Proxy  ProxyConfig `yaml:"proxy"`
+	Trivy  TrivyConfig `yaml:"trivy"`
 }
 
 type Secrets struct {

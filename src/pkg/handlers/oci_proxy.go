@@ -221,6 +221,16 @@ func (h *OCIHandler) proxyManifest(c *fiber.Ctx, name, reference string) error {
 		go h.cacheManifest(name, reference, manifestData, registryURL, upstreamName)
 	}
 
+	// Trigger async vulnerability scan for proxied images
+	if h.scanService != nil && h.scanService.IsEnabled() {
+		h.scanService.ScanImage(name, reference, digest)
+	}
+
+	// Security gate check before serving proxied manifest
+	if blocked, resp := h.checkScanGate(c, manifestData, name); blocked {
+		return resp
+	}
+
 	c.Set("Content-Type", contentType)
 	c.Set("Docker-Content-Digest", digest)
 
