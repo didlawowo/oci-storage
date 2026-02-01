@@ -206,7 +206,7 @@ kyverno:
   enabled: true
   # The hostname of the OCI portal (without protocol)
   # e.g., "oci-storage.example.com" or "oci-storage:3030"
-  portalHost: "oci-storage.oci-storage.svc.cluster.local"
+  portalHost: "oci-storage.dc-tech.work"
 # Garbage collection CronJob configuration
 gc:
   enabled: true
