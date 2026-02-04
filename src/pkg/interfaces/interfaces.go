@@ -59,6 +59,10 @@ type IndexServiceInterface interface {
 type ScanServiceInterface interface {
 	// ScanImage triggers a vulnerability scan for the given image
 	ScanImage(name, ref, digest string)
+	// TriggerScan forces a vulnerability scan, ignoring TTL. Returns "started", "in_progress", or "disabled"
+	TriggerScan(name, ref, digest string) string
+	// IsScanInProgress returns whether a scan is currently running for the given digest
+	IsScanInProgress(digest string) bool
 	// GetScanResult returns the scan result for a given digest
 	GetScanResult(digest string) (*models.ScanResult, error)
 	// GetDecision returns the security gate decision for a given digest

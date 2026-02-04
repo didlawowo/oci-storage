@@ -14,11 +14,29 @@
 
 <body class="bg-gray-100">
     <nav class="bg-blue-600 text-white p-4 shadow-lg">
-        <div class="container mx-auto flex items-center">
-            <a href="/" class="flex items-center">
-                <img src="/favicon.ico" alt="Logo" class="h-8 w-8 mr-2">
-                <h1 class="text-2xl font-bold">oci storage</h1>
-            </a>
+        <div class="container mx-auto flex justify-between items-center">
+            <div class="flex items-center">
+                <a href="/" class="flex items-center">
+                    <img src="/favicon.ico" alt="Logo" class="h-8 w-8 mr-2">
+                    <h1 class="text-2xl font-bold">oci storage</h1>
+                </a>
+
+                <!-- Navigation tabs -->
+                <div class="flex space-x-4 ml-8">
+                    <a href="/?tab=charts" class="tab-btn active px-4 py-2 rounded bg-blue-700">
+                        <i class="material-icons align-middle mr-1">sailing</i> Helm Charts
+                    </a>
+                    <a href="/?tab=images" class="tab-btn px-4 py-2 rounded hover:bg-blue-700">
+                        <i class="material-icons align-middle mr-1">inventory_2</i> Docker Images
+                    </a>
+                    <a href="/?tab=security" class="tab-btn px-4 py-2 rounded hover:bg-blue-700">
+                        <i class="material-icons align-middle mr-1">security</i> Security Gate
+                    </a>
+                </div>
+            </div>
+
+            <!-- Breadcrumb -->
+            <span class="text-blue-200 text-sm">{{.Chart.Name}}:{{.Chart.Version}}</span>
         </div>
     </nav>
 

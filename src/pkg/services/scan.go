@@ -20,11 +20,13 @@ import (
 
 // ScanService handles Trivy vulnerability scanning and security gate decisions
 type ScanService struct {
-	config      *config.Config
-	log         *utils.Logger
-	pathManager *utils.PathManager
-	scanMutex   sync.RWMutex
-	scanSem     chan struct{} // limits concurrent scans
+	config         *config.Config
+	log            *utils.Logger
+	pathManager    *utils.PathManager
+	scanMutex      sync.RWMutex
+	scanSem        chan struct{}      // limits concurrent scans
+	inProgressMu   sync.RWMutex       // protects inProgress map
+	inProgress     map[string]bool    // tracks digests currently being scanned
 }
 
 // NewScanService creates a new ScanService
@@ -40,12 +42,91 @@ func NewScanService(cfg *config.Config, log *utils.Logger, pathManager *utils.Pa
 		log:         log,
 		pathManager: pathManager,
 		scanSem:     make(chan struct{}, 3), // max 3 concurrent scans
+		inProgress:  make(map[string]bool),
 	}
 }
 
 // IsEnabled returns whether scanning is enabled
 func (s *ScanService) IsEnabled() bool {
 	return s.config.Trivy.Enabled
+}
+
+// IsScanInProgress returns whether a scan is currently running for the given digest
+func (s *ScanService) IsScanInProgress(digest string) bool {
+	s.inProgressMu.RLock()
+	defer s.inProgressMu.RUnlock()
+	return s.inProgress[digest]
+}
+
+// setScanInProgress marks a digest as being scanned
+func (s *ScanService) setScanInProgress(digest string, inProgress bool) {
+	s.inProgressMu.Lock()
+	defer s.inProgressMu.Unlock()
+	if inProgress {
+		s.inProgress[digest] = true
+	} else {
+		delete(s.inProgress, digest)
+	}
+}
+
+// TriggerScan forces a vulnerability scan for the given image, ignoring TTL
+// Returns: "started" if scan was triggered, "in_progress" if already scanning, "disabled" if trivy disabled
+func (s *ScanService) TriggerScan(name, ref, digest string) string {
+	if !s.IsEnabled() {
+		return "disabled"
+	}
+
+	// Check if already in progress
+	if s.IsScanInProgress(digest) {
+		return "in_progress"
+	}
+
+	// Mark as in progress and start scan
+	s.setScanInProgress(digest, true)
+
+	go func() {
+		defer s.setScanInProgress(digest, false)
+
+		// Acquire semaphore
+		s.scanSem <- struct{}{}
+		defer func() { <-s.scanSem }()
+
+		s.log.WithFunc().WithFields(logrus.Fields{
+			"name":   name,
+			"ref":    ref,
+			"digest": digest,
+		}).Info("Starting triggered vulnerability scan")
+
+		result, err := s.executeScan(name, ref, digest)
+		if err != nil {
+			s.log.WithFunc().WithError(err).WithField("digest", digest).Error("Triggered scan failed")
+			return
+		}
+
+		// Save scan result
+		if err := s.saveScanResult(result); err != nil {
+			s.log.WithFunc().WithError(err).Error("Failed to save scan result")
+			return
+		}
+
+		// Evaluate policy and create decision
+		status := s.EvaluatePolicy(result)
+		s.log.WithFunc().WithFields(logrus.Fields{
+			"digest":   digest,
+			"status":   status,
+			"critical": result.Critical,
+			"high":     result.High,
+		}).Info("Triggered scan completed")
+
+		// Auto-create decision
+		if status == "approved" {
+			s.SetDecision(digest, "approved", "Auto-approved: within policy thresholds", "system", 0)
+		} else {
+			s.SetDecision(digest, "pending", "Exceeds policy thresholds, awaiting review", "system", 0)
+		}
+	}()
+
+	return "started"
 }
 
 // ScanImage triggers an async vulnerability scan for the given image

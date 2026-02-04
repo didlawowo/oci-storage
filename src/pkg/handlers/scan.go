@@ -166,3 +166,58 @@ func (h *ScanHandler) ListAll(c *fiber.Ctx) error {
 
 	return c.JSON(decisions)
 }
+
+// TriggerScan manually triggers a vulnerability scan for an image
+// POST /api/scan/trigger with body { "name": "image/name", "tag": "v1.0", "digest": "sha256:..." }
+func (h *ScanHandler) TriggerScan(c *fiber.Ctx) error {
+	var body struct {
+		Name   string `json:"name"`
+		Tag    string `json:"tag"`
+		Digest string `json:"digest"`
+	}
+
+	if err := c.BodyParser(&body); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "Invalid request body"})
+	}
+
+	if body.Name == "" || body.Digest == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "name and digest are required"})
+	}
+
+	// Use tag if provided, otherwise use "latest"
+	tag := body.Tag
+	if tag == "" {
+		tag = "latest"
+	}
+
+	h.log.WithFunc().WithField("name", body.Name).WithField("tag", tag).WithField("digest", body.Digest).Info("Manual scan triggered")
+
+	status := h.scanService.TriggerScan(body.Name, tag, body.Digest)
+
+	switch status {
+	case "started":
+		return c.JSON(fiber.Map{"status": "started", "message": "Scan started"})
+	case "in_progress":
+		return c.Status(409).JSON(fiber.Map{"status": "in_progress", "message": "Scan already in progress"})
+	case "disabled":
+		return c.Status(503).JSON(fiber.Map{"status": "disabled", "message": "Scanning is disabled"})
+	default:
+		return c.Status(500).JSON(fiber.Map{"status": "error", "message": "Unknown status"})
+	}
+}
+
+// GetScanStatus returns whether a scan is in progress for a given digest
+func (h *ScanHandler) GetScanStatus(c *fiber.Ctx) error {
+	digest := c.Params("digest")
+	if digest == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "digest is required"})
+	}
+
+	fullDigest := "sha256:" + digest
+	inProgress := h.scanService.IsScanInProgress(fullDigest)
+
+	return c.JSON(fiber.Map{
+		"digest":     fullDigest,
+		"inProgress": inProgress,
+	})
+}

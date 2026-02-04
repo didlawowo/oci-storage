@@ -249,6 +249,8 @@ func main() {
 		app.Get("/api/scan/summary", scanHandler.GetSummary)
 		app.Get("/api/scan/all", scanHandler.ListAll)
 		app.Get("/api/scan/report/:digest", scanHandler.GetReport)
+		app.Get("/api/scan/status/:digest", scanHandler.GetScanStatus)
+		app.Post("/api/scan/trigger", scanHandler.TriggerScan)
 		app.Post("/api/scan/approve/:digest", scanHandler.Approve)
 		app.Post("/api/scan/deny/:digest", scanHandler.Deny)
 		app.Delete("/api/scan/decision/:digest", scanHandler.DeleteDecision)
