@@ -1,22 +1,44 @@
+# Git
 .git
 .gitignore
-.env
 .github
-*.md
-docs/
-src/test
-*.test
+
+# IDE
 .idea/
 .vscode/
+.DS_Store
+
+# Environment
+.env
 .envrc
+
+# Documentation
+*.md
+docs/
+
+# Testing
+src/test
+src/testdata
+tests/
+*.test
+
+# Local data (development runtime data)
+src/data/
+src/tmp/
+tmp/
+data/
+
+# Build artifacts
 docker-compose.yaml
 Dockerfile
 taskfile.yaml
 .air.toml
-tmp/
 make-certs.sh
-cmd/client*
-.air.toml
-src/test
 
+# Other
 sonar-project.properties
+.pre-commit-config.yaml
+.claude
+assets/
+test-app/
+charts/

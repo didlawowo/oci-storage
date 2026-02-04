@@ -4,7 +4,7 @@ podAnnotations:
   oci-portal-skip: "true"
 image:
   repository: fizzbuzz2/oci-storage
-  tag: "f1bf932"
+  tag: "63b771f"
   pullPolicy: "Always"
   pullSecrets: []
 strategy:
@@ -217,7 +217,7 @@ trivy:
   enabled: true
   image:
     repository: aquasec/trivy
-    tag: "f1bf932"
+    tag: "63b771f"
     pullPolicy: IfNotPresent
   resources:
     requests:
