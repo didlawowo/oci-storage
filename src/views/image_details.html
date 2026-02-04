@@ -9,16 +9,42 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
     <link href="/static/css/main.css" rel="stylesheet">
+    <style>
+        .animate-spin {
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+    </style>
 </head>
 
 <body class="bg-gray-100">
     <nav class="bg-blue-600 text-white p-4 shadow-lg">
-        <div class="container mx-auto flex items-center">
-            <a href="/" class="flex items-center">
-                <img src="/favicon.ico" alt="Logo" class="h-8 w-8 mr-2">
-                <h1 class="text-2xl font-bold">oci storage</h1>
-            </a>
-            <span class="ml-4 text-blue-200">/ Docker Images / {{.Name}}:{{.Tag}}</span>
+        <div class="container mx-auto flex justify-between items-center">
+            <div class="flex items-center">
+                <a href="/" class="flex items-center">
+                    <img src="/favicon.ico" alt="Logo" class="h-8 w-8 mr-2">
+                    <h1 class="text-2xl font-bold">oci storage</h1>
+                </a>
+
+                <!-- Navigation tabs -->
+                <div class="flex space-x-4 ml-8">
+                    <a href="/?tab=charts" class="tab-btn px-4 py-2 rounded hover:bg-blue-700">
+                        <i class="material-icons align-middle mr-1">sailing</i> Helm Charts
+                    </a>
+                    <a href="/?tab=images" class="tab-btn active px-4 py-2 rounded bg-blue-700">
+                        <i class="material-icons align-middle mr-1">inventory_2</i> Docker Images
+                    </a>
+                    <a href="/?tab=security" class="tab-btn px-4 py-2 rounded hover:bg-blue-700">
+                        <i class="material-icons align-middle mr-1">security</i> Security Gate
+                    </a>
+                </div>
+            </div>
+
+            <!-- Breadcrumb -->
+            <span class="text-blue-200 text-sm">{{.Name}}:{{.Tag}}</span>
         </div>
     </nav>
 
@@ -67,16 +93,26 @@
             {{end}}
 
             <!-- Vulnerability Scan Results -->
-            <div class="mb-6" id="vulnScanSection" style="display: none;">
+            <div class="mb-6" id="vulnScanSection">
                 <h3 class="text-lg font-semibold mb-2 flex items-center gap-2">
                     <i class="material-icons text-gray-600">bug_report</i>
                     Vulnerability Scan
                     <span id="vulnScanStatus" class="px-2 py-1 rounded-full text-xs font-medium"></span>
+                    <button id="rescanBtn" onclick="triggerRescan()" class="ml-auto flex items-center gap-1 bg-blue-500 text-white px-3 py-1 rounded text-sm hover:bg-blue-600 disabled:bg-gray-400 disabled:cursor-not-allowed">
+                        <i class="material-icons text-sm" id="rescanIcon">refresh</i>
+                        <span id="rescanText">Rescan</span>
+                    </button>
                 </h3>
-                <div id="vulnScanSummary" class="flex gap-3 mb-3"></div>
-                <div id="vulnScanDecision" class="mb-3 p-3 rounded-lg border"></div>
-                <div id="vulnScanActions" class="mb-3"></div>
-                <div id="vulnScanTable" class="max-h-64 overflow-y-auto"></div>
+                <div id="vulnScanNoResults" class="p-4 bg-gray-50 rounded-lg border text-gray-600 text-sm">
+                    <i class="material-icons align-middle mr-1">info</i>
+                    No scan results yet. Click "Rescan" to trigger a vulnerability scan.
+                </div>
+                <div id="vulnScanResults" style="display: none;">
+                    <div id="vulnScanSummary" class="flex flex-wrap gap-3 mb-3"></div>
+                    <div id="vulnScanDecision" class="mb-3 p-3 rounded-lg border"></div>
+                    <div id="vulnScanActions" class="mb-3"></div>
+                    <div id="vulnScanTable" class="max-h-64 overflow-y-auto"></div>
+                </div>
             </div>
 
             <!-- Security Insights -->
@@ -395,24 +431,47 @@
         loadVulnScan();
     });
 
-    async function loadVulnScan() {
-        // Get digest from the dedicated digest element
+    // Get image info for scan trigger
+    function getImageInfo() {
         const digestEl = document.getElementById('imageDigest');
-        if (!digestEl) return;
+        if (!digestEl) return null;
         const fullDigest = digestEl.textContent.trim();
-        if (!fullDigest.startsWith('sha256:')) return;
-        const digestShort = fullDigest.replace('sha256:', '').substring(0, 64);
+        if (!fullDigest.startsWith('sha256:')) return null;
+        return {
+            name: '{{.Name}}',
+            tag: '{{.Tag}}',
+            digest: fullDigest,
+            digestShort: fullDigest.replace('sha256:', '').substring(0, 64)
+        };
+    }
+
+    async function loadVulnScan() {
+        const info = getImageInfo();
+        if (!info) return;
+
+        const noResultsEl = document.getElementById('vulnScanNoResults');
+        const resultsEl = document.getElementById('vulnScanResults');
 
         try {
-            const resp = await fetch(`/api/scan/report/${digestShort}`);
-            if (!resp.ok) return;
+            const resp = await fetch(`/api/scan/report/${info.digestShort}`);
+            if (!resp.ok) {
+                // No scan results - show the "no results" message
+                noResultsEl.style.display = 'block';
+                resultsEl.style.display = 'none';
+                return;
+            }
             const data = await resp.json();
             const sr = data.scanResult;
             const decision = data.decision;
-            if (!sr) return;
+            if (!sr) {
+                noResultsEl.style.display = 'block';
+                resultsEl.style.display = 'none';
+                return;
+            }
 
-            const section = document.getElementById('vulnScanSection');
-            section.style.display = 'block';
+            // Hide no results, show results
+            noResultsEl.style.display = 'none';
+            resultsEl.style.display = 'block';
 
             // Status badge
             const statusEl = document.getElementById('vulnScanStatus');
@@ -459,10 +518,98 @@
                 tableHtml += '</tbody></table>';
                 if (sr.vulnerabilities.length > 50) tableHtml += `<p class="text-xs text-gray-400 mt-2">Showing 50 of ${sr.vulnerabilities.length} vulnerabilities</p>`;
                 document.getElementById('vulnScanTable').innerHTML = tableHtml;
+            } else {
+                document.getElementById('vulnScanTable').innerHTML = '<p class="text-sm text-green-600"><i class="material-icons align-middle mr-1">check_circle</i>No vulnerabilities found!</p>';
             }
         } catch (e) {
-            // Scan not available, keep section hidden
+            // Scan not available - show the "no results" message
+            noResultsEl.style.display = 'block';
+            resultsEl.style.display = 'none';
         }
+    }
+
+    // Trigger a rescan
+    async function triggerRescan() {
+        const info = getImageInfo();
+        if (!info) return;
+
+        const btn = document.getElementById('rescanBtn');
+        const icon = document.getElementById('rescanIcon');
+        const text = document.getElementById('rescanText');
+
+        // Disable button and show loading
+        btn.disabled = true;
+        icon.textContent = 'hourglass_empty';
+        icon.classList.add('animate-spin');
+        text.textContent = 'Scanning...';
+
+        try {
+            const resp = await fetch('/api/scan/trigger', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    name: info.name,
+                    tag: info.tag,
+                    digest: info.digest
+                })
+            });
+
+            const data = await resp.json();
+
+            if (data.status === 'started') {
+                // Poll for completion
+                pollScanStatus(info.digestShort);
+            } else if (data.status === 'in_progress') {
+                // Already scanning, poll for completion
+                pollScanStatus(info.digestShort);
+            } else {
+                // Error or disabled
+                alert(data.message || 'Failed to start scan');
+                resetRescanButton();
+            }
+        } catch (e) {
+            alert('Error triggering scan: ' + e.message);
+            resetRescanButton();
+        }
+    }
+
+    // Poll scan status until complete
+    async function pollScanStatus(digestShort) {
+        const maxAttempts = 60; // 5 minutes max (5s interval)
+        let attempts = 0;
+
+        const poll = async () => {
+            attempts++;
+            try {
+                const resp = await fetch(`/api/scan/status/${digestShort}`);
+                const data = await resp.json();
+
+                if (!data.inProgress || attempts >= maxAttempts) {
+                    // Scan complete or timeout
+                    resetRescanButton();
+                    loadVulnScan(); // Reload results
+                } else {
+                    // Still scanning, poll again
+                    setTimeout(poll, 5000);
+                }
+            } catch (e) {
+                resetRescanButton();
+                loadVulnScan();
+            }
+        };
+
+        setTimeout(poll, 3000); // First check after 3s
+    }
+
+    function resetRescanButton() {
+        const btn = document.getElementById('rescanBtn');
+        const icon = document.getElementById('rescanIcon');
+        const text = document.getElementById('rescanText');
+
+        btn.disabled = false;
+        icon.textContent = 'refresh';
+        icon.classList.remove('animate-spin');
+        text.textContent = 'Rescan';
     }
 
     // Security color helpers
