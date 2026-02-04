@@ -359,6 +359,7 @@ func LoadSecrets() *Secrets {
 }
 
 // LoadAuthFromFile charge les informations d'authentification depuis un fichier séparé
+// Si des utilisateurs ont déjà été chargés via HELM_USERS, le fichier est optionnel
 func LoadAuthFromFile(config *Config) error {
 	// Chercher le fichier d'authentification
 	credFile := os.Getenv("AUTH_FILE")
@@ -369,7 +370,12 @@ func LoadAuthFromFile(config *Config) error {
 
 	// Vérifier si le fichier existe
 	if _, err := os.Stat(credFile); os.IsNotExist(err) {
-		return fmt.Errorf("auth file %s does not exist, using default auth config", credFile)
+		// Si des utilisateurs ont déjà été chargés via env vars, ce n'est pas une erreur
+		if len(config.Auth.Users) > 0 {
+			fmt.Printf("ℹ️  Auth file %s not found, using %d users from environment\n", credFile, len(config.Auth.Users))
+			return nil
+		}
+		return fmt.Errorf("auth file %s does not exist and no users loaded from environment", credFile)
 	}
 
 	// Lire et parser le fichier d'authentification
