@@ -46,7 +46,7 @@ persistentVolumesClaims:
 - name: oci-storage-data
   accessModes:
   - ReadWriteOnce
-  storage: 100Gi
+  size: 100Gi
 application:
   ports:
   - name: http
