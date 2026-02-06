@@ -1,9 +1,20 @@
 root = "."
 tmp_dir = "tmp"
 [build]
-  cmd = "go build -o ./tmp/main ./cmd/server/"
+  # Use -trimpath for reproducible builds, remove debug info with -ldflags for faster builds
+  cmd = "go build -trimpath -ldflags='-s -w' -o ./tmp/main ./cmd/server/"
   bin = "./tmp/main"
-  delay = 1000
-  exclude_dir = ["assets", "tmp", "vendor", "testdata", "data"]
-  include_ext = ["go", "tpl", "tmpl", "html", "yaml", "yml"]
+  delay = 500
+  exclude_dir = ["assets", "tmp", "vendor", "testdata", "data", "node_modules"]
+  include_ext = ["go", "tpl", "tmpl", "html"]
   exclude_regex = ["_test.go", "index\\.yaml"]
+  # Kill old process before starting new one
+  kill_delay = 500
+  # Send interrupt signal instead of kill
+  send_interrupt = true
+  # Stop on build error
+  stop_on_error = true
+[log]
+  time = true
+[misc]
+  clean_on_exit = true

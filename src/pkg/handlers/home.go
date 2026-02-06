@@ -209,7 +209,7 @@ func (h *HelmHandler) DisplayHome(c *fiber.Ctx) error {
 
 	return c.Render("home", fiber.Map{
 		"Charts":  chartGroups,
-		"Title":   "Helm Charts Repository",
+		"Title":   "OCI Storage",
 		"Version": version.String(),
 	})
 }
