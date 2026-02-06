@@ -217,7 +217,7 @@ trivy:
   enabled: true
   image:
     repository: aquasec/trivy
-    tag: "63b771f"
+    tag: "0.68.2"
     pullPolicy: IfNotPresent
   resources:
     requests:

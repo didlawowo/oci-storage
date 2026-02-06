@@ -64,12 +64,13 @@ jobs:
           wget -q https://github.com/mikefarah/yq/releases/download/v4.35.1/yq_linux_amd64 -O /tmp/yq
           chmod +x /tmp/yq
 
-          # Update values
-          /tmp/yq e -i '.image.repository = "${{ secrets.DOCKER_USERNAME }}/${{ steps.vars.outputs.REPO_NAME }}"' helm/values.yaml
-          /tmp/yq e -i '.image.tag = "${{ steps.vars.outputs.SHORT_SHA }}"' helm/values.yaml
+          # Update only the main application image (not sidecars like trivy)
+          # Using explicit path to avoid updating .trivy.image.tag
+          /tmp/yq e -i '(.image.repository) = "${{ secrets.DOCKER_USERNAME }}/${{ steps.vars.outputs.REPO_NAME }}"' helm/values.yaml
+          /tmp/yq e -i '(.image.tag) = "${{ steps.vars.outputs.SHORT_SHA }}"' helm/values.yaml
 
           echo "Updated values.yaml:"
-          cat helm/values.yaml
+          grep -A3 "^image:" helm/values.yaml
 
       - name: Commit and push changes (main only)
         if: github.ref == 'refs/heads/main'

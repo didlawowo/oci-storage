@@ -1137,14 +1137,23 @@ function renderScanDecisions(decisions) {
       </button>
     `;
 
+    // Truncate long tags (especially sha256 hashes)
+    let tagDisplay = d.tag || "-";
+    const tagFull = tagDisplay;
+    if (tagDisplay.startsWith("sha256:")) {
+      tagDisplay = tagDisplay.substring(0, 19) + "...";
+    } else if (tagDisplay.length > 20) {
+      tagDisplay = tagDisplay.substring(0, 17) + "...";
+    }
+
     return `<tr class="hover:bg-gray-50">
-      <td class="px-4 py-3 text-sm font-medium text-gray-900">${d.imageName || "-"}</td>
-      <td class="px-4 py-3 text-sm text-gray-600">${d.tag || "-"}</td>
+      <td class="px-4 py-3 text-sm font-medium text-gray-900 max-w-xs truncate" title="${d.imageName || ""}">${d.imageName || "-"}</td>
+      <td class="px-4 py-3 text-sm text-gray-600" title="${tagFull}">${tagDisplay}</td>
       <td class="px-4 py-3">${cveHtml}</td>
       <td class="px-4 py-3"><span class="px-2 py-1 rounded-full text-xs font-medium ${statusClass}">${d.status}</span></td>
       <td class="px-4 py-3 text-sm text-gray-600">${d.decidedBy || "-"}</td>
       <td class="px-4 py-3 text-sm text-gray-600">${date}</td>
-      <td class="px-4 py-3"><div class="flex gap-1">${actionsHtml}</div></td>
+      <td class="px-4 py-3"><div class="flex gap-1 flex-nowrap">${actionsHtml}</div></td>
     </tr>`;
   }).join("");
 }
