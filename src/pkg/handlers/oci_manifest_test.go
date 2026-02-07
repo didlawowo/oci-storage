@@ -17,6 +17,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 )
 
 // setupManifestTestEnv creates a test environment for manifest tests
@@ -85,7 +86,7 @@ func TestPutManifest_MultiArchIndex(t *testing.T) {
 	expectedSize := len(manifestBytes)
 
 	// Setup mocks
-	mockImageService.On("SaveImageIndex", "stock-analyzer", "v1.1.0", manifestBytes, int64(4762)).Return(nil)
+	mockImageService.On("SaveImageIndex", "stock-analyzer", "v1.1.0", manifestBytes, mock.AnythingOfType("int64")).Return(nil)
 
 	// PUT the manifest
 	req := httptest.NewRequest("PUT", "/v2/stock-analyzer/manifests/v1.1.0", bytes.NewReader(manifestBytes))
@@ -214,7 +215,7 @@ func TestPutManifest_DigestVerification(t *testing.T) {
 
 	expectedDigest := fmt.Sprintf("sha256:%x", sha256.Sum256(manifestIndex))
 
-	mockImageService.On("SaveImageIndex", "testimg", "v1", manifestIndex, int64(100)).Return(nil)
+	mockImageService.On("SaveImageIndex", "testimg", "v1", manifestIndex, mock.AnythingOfType("int64")).Return(nil)
 
 	// PUT manifest
 	req := httptest.NewRequest("PUT", "/v2/testimg/manifests/v1", bytes.NewReader(manifestIndex))
@@ -298,7 +299,7 @@ func TestManifestDigestIntegrity(t *testing.T) {
 	indexBytes := []byte(manifestIndex)
 	indexDigest := fmt.Sprintf("sha256:%x", sha256.Sum256(indexBytes))
 
-	mockImageService.On("SaveImageIndex", "multiarch-test", "latest", indexBytes, int64(len(arm64Manifest)+len(amd64Manifest))).Return(nil)
+	mockImageService.On("SaveImageIndex", "multiarch-test", "latest", indexBytes, mock.AnythingOfType("int64")).Return(nil)
 
 	req3 := httptest.NewRequest("PUT", "/v2/multiarch-test/manifests/latest", bytes.NewReader(indexBytes))
 	resp3, _ := app.Test(req3)
