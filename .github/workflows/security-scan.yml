@@ -1,0 +1,115 @@
+# =============================================================================
+# Security - Comprehensive Scan (Go)
+# =============================================================================
+# Runs on: daily at 2 AM UTC + manual trigger
+# Uses reusable actions from didlawowo/workflow-ci
+# =============================================================================
+
+name: "Security - Comprehensive Scan"
+
+on:
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+    inputs:
+      scan-level:
+        description: "Security scan level"
+        required: false
+        type: choice
+        options: ["standard", "comprehensive", "critical-only"]
+        default: "standard"
+      fail-on-issues:
+        description: "Fail on security issues"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  security-events: write
+  issues: write
+
+env:
+  GO_VERSION: "1.24"
+  GO_WORKING_DIR: "src"
+
+jobs:
+  filesystem-security:
+    name: "Filesystem Security"
+    runs-on: arc-runner-oci-storage
+    permissions:
+      contents: read
+      security-events: write
+    outputs:
+      vulnerabilities-found: ${{ steps.scan.outputs.vulnerabilities-found }}
+      secrets-found: ${{ steps.scan.outputs.secrets-found }}
+      misconfigurations-found: ${{ steps.scan.outputs.misconfigurations-found }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Determine severity
+        id: severity
+        run: |
+          LEVEL="${{ inputs.scan-level || 'standard' }}"
+          case "$LEVEL" in
+            "critical-only") echo "level=CRITICAL" >> "$GITHUB_OUTPUT" ;;
+            "comprehensive") echo "level=CRITICAL,HIGH,MEDIUM,LOW" >> "$GITHUB_OUTPUT" ;;
+            *) echo "level=CRITICAL,HIGH,MEDIUM" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Trivy filesystem scan
+        id: scan
+        uses: didlawowo/workflow-ci/.github/actions/trivy-filesystem-scan@main
+        with:
+          severity: ${{ steps.severity.outputs.level }}
+          fail-on-critical: ${{ inputs.fail-on-issues || 'false' }}
+
+  code-security:
+    name: "Code Security"
+    runs-on: arc-runner-oci-storage
+    permissions:
+      contents: read
+      security-events: write
+    outputs:
+      quality-passed: ${{ steps.checks.outputs.quality-passed }}
+      security-issues: ${{ steps.checks.outputs.security-issues }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Security checks
+        id: checks
+        uses: didlawowo/workflow-ci/.github/actions/go-quality-security@main
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          working-directory: ${{ env.GO_WORKING_DIR }}
+          golangci-lint-version: "v1.64.8"
+
+  compliance:
+    name: "Compliance"
+    needs: [filesystem-security, code-security]
+    if: always()
+    runs-on: arc-runner-oci-storage
+    steps:
+      - name: Summary
+        run: |
+          FS_VULNS="${{ needs.filesystem-security.outputs.vulnerabilities-found || '0' }}"
+          FS_SECRETS="${{ needs.filesystem-security.outputs.secrets-found || '0' }}"
+          FS_MISCONFIGS="${{ needs.filesystem-security.outputs.misconfigurations-found || '0' }}"
+          CODE_ISSUES="${{ needs.code-security.outputs.security-issues || '0' }}"
+          TOTAL=$((FS_VULNS + FS_SECRETS + FS_MISCONFIGS + CODE_ISSUES))
+
+          cat >> "$GITHUB_STEP_SUMMARY" << EOF
+          ## Security Scan Summary
+
+          | Category | Count |
+          |----------|-------|
+          | Vulnerabilities | ${FS_VULNS} |
+          | Secrets | ${FS_SECRETS} |
+          | Misconfigurations | ${FS_MISCONFIGS} |
+          | Code Issues | ${CODE_ISSUES} |
+          | **Total** | **${TOTAL}** |
+          EOF

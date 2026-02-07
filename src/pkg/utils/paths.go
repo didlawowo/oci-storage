@@ -19,12 +19,12 @@ type PathManager struct {
 func NewPathManager(basePath string, log *Logger) *PathManager {
 	// Créer les dossiers nécessaires
 	dirs := []string{
-		"temp",            // Pour les uploads temporaires
-		"blobs",           // Pour les blobs (shared between charts and images)
-		"manifests",       // Pour les manifests Helm
-		"charts",          // Pour les charts Helm
-		"images",          // Pour les images Docker
-		"cache/metadata",  // Pour les métadonnées du cache proxy
+		"temp",           // Pour les uploads temporaires
+		"blobs",          // Pour les blobs (shared between charts and images)
+		"manifests",      // Pour les manifests Helm
+		"charts",         // Pour les charts Helm
+		"images",         // Pour les images Docker
+		"cache/metadata", // Pour les métadonnées du cache proxy
 	}
 
 	for _, dir := range dirs {

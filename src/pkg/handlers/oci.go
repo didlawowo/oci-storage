@@ -101,8 +101,8 @@ func (h *OCIHandler) GetBlob(c *fiber.Ctx) error {
 	// Not found locally - try proxy if enabled
 	if h.proxyService != nil && h.proxyService.IsEnabled() {
 		h.log.WithFunc().WithFields(logrus.Fields{
-			"name":           normalizedName,
-			"digest":         digest,
+			"name":   normalizedName,
+			"digest": digest,
 		}).Debug("Blob not found locally, trying proxy")
 
 		return h.proxyBlob(c, normalizedName, digest)
@@ -234,15 +234,15 @@ func (h *OCIHandler) HandleManifest(c *fiber.Ctx) error {
 	shouldProxy := h.proxyService != nil && h.proxyService.IsEnabled() && isProxyPath
 
 	h.log.WithFunc().WithFields(logrus.Fields{
-		"shouldProxy":     shouldProxy,
-		"isProxyPath":     isProxyPath,
-		"method":          c.Method(),
+		"shouldProxy": shouldProxy,
+		"isProxyPath": isProxyPath,
+		"method":      c.Method(),
 	}).Debug("Proxy decision")
 
 	if shouldProxy {
 		h.log.WithFunc().WithFields(logrus.Fields{
-			"name":           normalizedName,
-			"reference":      reference,
+			"name":      normalizedName,
+			"reference": reference,
 		}).Debug("Manifest not found locally, trying proxy")
 
 		return h.proxyManifest(c, normalizedName, reference)

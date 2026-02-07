@@ -255,7 +255,7 @@ func (s *ProxyService) getToken(ctx context.Context, wwwAuth, name string, regCo
 	tokenURL := fmt.Sprintf("%s?service=%s&scope=%s", realm, service, scope)
 
 	s.log.WithFields(logrus.Fields{
-		"tokenURL":    tokenURL,
+		"tokenURL":       tokenURL,
 		"hasCredentials": regConfig != nil && regConfig.Username != "",
 	}).Debug("Fetching auth token")
 

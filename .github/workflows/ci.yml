@@ -1,0 +1,135 @@
+# =============================================================================
+# CI - Branch Pipeline (Go)
+# =============================================================================
+# Runs on: feature/fix branches + PRs to main
+# Uses reusable actions from didlawowo/workflow-ci
+# =============================================================================
+
+name: "CI - Branch Pipeline"
+
+on:
+  push:
+    branches: ["**", "!main"]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: "1.24"
+  COVERAGE_THRESHOLD: "15"
+  IMAGE_NAME: ${{ secrets.DOCKER_USERNAME }}/oci-storage
+  GO_WORKING_DIR: "src"
+
+jobs:
+  tests:
+    name: "Tests & Coverage"
+    runs-on: arc-runner-oci-storage
+    permissions:
+      contents: read
+      pull-requests: write
+    outputs:
+      coverage-percentage: ${{ steps.test.outputs.coverage-percentage }}
+      tests-passed: ${{ steps.test.outputs.tests-passed }}
+      test-count: ${{ steps.test.outputs.test-count }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Run tests
+        id: test
+        uses: didlawowo/workflow-ci/.github/actions/run-go-tests@main
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          working-directory: ${{ env.GO_WORKING_DIR }}
+          coverage-threshold: ${{ env.COVERAGE_THRESHOLD }}
+          upload-coverage: "false"
+
+  quality-security:
+    name: "Quality & Security"
+    runs-on: arc-runner-oci-storage
+    permissions:
+      contents: read
+      security-events: write
+    outputs:
+      quality-passed: ${{ steps.checks.outputs.quality-passed }}
+      security-issues: ${{ steps.checks.outputs.security-issues }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Run quality & security checks
+        id: checks
+        uses: didlawowo/workflow-ci/.github/actions/go-quality-security@main
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          working-directory: ${{ env.GO_WORKING_DIR }}
+          golangci-lint-version: "v1.64.8"
+
+  docker-build:
+    name: "Docker Build & Scan"
+    needs: [tests]
+    if: always() && needs.tests.result == 'success'
+    runs-on: arc-runner-oci-storage
+    permissions:
+      contents: read
+      security-events: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Generate tag
+        id: tag
+        run: |
+          BRANCH=$(echo "${{ github.ref_name }}" | sed 's/[^a-zA-Z0-9]/-/g' | tr '[:upper:]' '[:lower:]')
+          SHA=$(git rev-parse --short HEAD)
+          echo "branch-tag=${BRANCH}-${SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Get build metadata
+        id: vars
+        run: |
+          VERSION=$(grep '^appVersion:' helm/Chart.yaml | cut -d'"' -f2)
+          echo "VERSION=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "FULL_SHA=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: didlawowo/workflow-ci/.github/actions/docker-build-push@main
+        with:
+          image-name: ${{ env.IMAGE_NAME }}
+          image-tag: ${{ steps.tag.outputs.branch-tag }}
+          push: ${{ github.event_name == 'push' }}
+          registry-username: ${{ secrets.DOCKER_USERNAME }}
+          registry-password: ${{ secrets.DOCKER_PASSWORD }}
+          cache-scope: oci-storage
+          build-args: |
+            VERSION=${{ steps.vars.outputs.VERSION }}
+            COMMIT=${{ steps.vars.outputs.FULL_SHA }}
+            BUILD_TIME=${{ steps.vars.outputs.BUILD_TIME }}
+
+  summary:
+    name: "Pipeline Summary"
+    if: always()
+    needs: [tests, quality-security, docker-build]
+    runs-on: arc-runner-oci-storage
+    steps:
+      - name: Create summary
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" << EOF
+          ## CI Branch Pipeline Summary
+
+          | Stage | Status |
+          |-------|--------|
+          | **Tests** | ${{ needs.tests.result == 'success' && '✅ Passed' || '❌ Failed' }} |
+          | **Coverage** | ${{ needs.tests.outputs.coverage-percentage || 'N/A' }}% |
+          | **Quality** | ${{ needs.quality-security.result == 'success' && '✅ Passed' || '❌ Issues' }} |
+          | **Docker** | ${{ needs.docker-build.result == 'success' && '✅ Built' || needs.docker-build.result == 'skipped' && '⏭️ Skipped' || '❌ Failed' }} |
+
+          **Branch**: \`${{ github.ref_name }}\` | **Commit**: \`${{ github.sha }}\`
+          EOF

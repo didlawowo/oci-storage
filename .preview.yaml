@@ -1,0 +1,13 @@
+# .preview.yaml - Preview environment config for oci-storage
+# Service name is hardcoded in chart (not based on releaseName)
+serviceName: oci-storage
+servicePort: 80
+
+# Reduced resources for preview
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi

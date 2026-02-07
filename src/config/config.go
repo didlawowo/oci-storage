@@ -38,9 +38,9 @@ type Backup struct {
 
 // RegistryConfig defines an upstream registry for proxying
 type RegistryConfig struct {
-	Name     string `yaml:"name"`              // e.g., "docker.io", "ghcr.io"
-	URL      string `yaml:"url"`               // e.g., "https://registry-1.docker.io"
-	Default  bool   `yaml:"default"`           // Is this the default registry?
+	Name     string `yaml:"name"`               // e.g., "docker.io", "ghcr.io"
+	URL      string `yaml:"url"`                // e.g., "https://registry-1.docker.io"
+	Default  bool   `yaml:"default"`            // Is this the default registry?
 	Username string `yaml:"username,omitempty"` // Optional username for auth
 	Password string `yaml:"password,omitempty"` // Optional password/token for auth
 }
@@ -52,10 +52,10 @@ type CacheConfig struct {
 
 // TimeoutConfig defines timeout settings for proxy operations
 type TimeoutConfig struct {
-	BlobBaseSeconds    int `yaml:"blobBaseSeconds"`    // Base timeout for blob operations (default: 60)
-	BlobPerGBSeconds   int `yaml:"blobPerGBSeconds"`   // Additional seconds per GB of blob size (default: 120)
-	ManifestSeconds    int `yaml:"manifestSeconds"`    // Timeout for manifest operations (default: 30)
-	MaxTimeoutMinutes  int `yaml:"maxTimeoutMinutes"`  // Maximum timeout cap (default: 30)
+	BlobBaseSeconds   int `yaml:"blobBaseSeconds"`   // Base timeout for blob operations (default: 60)
+	BlobPerGBSeconds  int `yaml:"blobPerGBSeconds"`  // Additional seconds per GB of blob size (default: 120)
+	ManifestSeconds   int `yaml:"manifestSeconds"`   // Timeout for manifest operations (default: 30)
+	MaxTimeoutMinutes int `yaml:"maxTimeoutMinutes"` // Maximum timeout cap (default: 30)
 }
 
 // ProxyConfig groups proxy-related settings
@@ -80,9 +80,9 @@ type TrivyPolicyConfig struct {
 
 // TrivyConfig defines Trivy scanner integration settings
 type TrivyConfig struct {
-	Enabled   bool               `yaml:"enabled"`
-	ServerURL string             `yaml:"serverURL"`
-	Policy    TrivyPolicyConfig  `yaml:"policy"`
+	Enabled   bool              `yaml:"enabled"`
+	ServerURL string            `yaml:"serverURL"`
+	Policy    TrivyPolicyConfig `yaml:"policy"`
 }
 
 type Config struct {
@@ -323,15 +323,15 @@ func loadAuthFromEnv(config *Config) {
 // Format: HELM_USER_1_USERNAME, HELM_USER_1_PASSWORD, HELM_USER_2_USERNAME, etc.
 func loadUsersFromPrefixedEnv(config *Config) {
 	config.Auth.Users = []User{}
-	
+
 	// Parcourir jusqu'à 20 utilisateurs possibles (peut être ajusté)
 	for i := 1; i <= 20; i++ {
 		usernameKey := fmt.Sprintf("HELM_USER_%d_USERNAME", i)
 		passwordKey := fmt.Sprintf("HELM_USER_%d_PASSWORD", i)
-		
+
 		username := os.Getenv(usernameKey)
 		password := os.Getenv(passwordKey)
-		
+
 		if username != "" && password != "" {
 			config.Auth.Users = append(config.Auth.Users, User{
 				Username: username,
