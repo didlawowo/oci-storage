@@ -1,15 +1,126 @@
-name: Build and Update Helm Values
+# =============================================================================
+# CD - Production Release (Go)
+# =============================================================================
+# Runs on: push to main
+# Uses reusable actions from didlawowo/workflow-ci
+# Custom: updates Helm values.yaml for ArgoCD deployment
+# =============================================================================
+
+name: "CD - Production Release"
 
 on:
   push:
-    branches:
-      - main
-      - feature/**
-      - fix/**
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+  packages: write
+  id-token: write
+  security-events: write
+
+env:
+  GO_VERSION: "1.24"
+  IMAGE_NAME: ${{ secrets.DOCKER_USERNAME }}/oci-storage
+  GO_WORKING_DIR: "src"
+  RELEASE_TYPE: "go"
 
 jobs:
-  build-and-update:
-    runs-on: arc-runner-oci-storage
+  release-please:
+    name: "Release Please"
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - name: Release Please
+        id: release
+        uses: googleapis/release-please-action@v4
+        with:
+          release-type: ${{ env.RELEASE_TYPE }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Auto-merge
+        if: steps.release.outputs.pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER=$(echo '${{ steps.release.outputs.pr }}' | jq -r '.number')
+          sleep 10
+          gh pr merge "${PR_NUMBER}" --auto --squash --repo ${{ github.repository }}
+
+  validation:
+    name: "Final Validation"
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Run tests
+        uses: didlawowo/workflow-ci/.github/actions/run-go-tests@main
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          working-directory: ${{ env.GO_WORKING_DIR }}
+
+      - name: Run security checks
+        uses: didlawowo/workflow-ci/.github/actions/go-quality-security@main
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          working-directory: ${{ env.GO_WORKING_DIR }}
+
+  production-build:
+    name: "Production Docker Build"
+    needs: [release-please, validation]
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+      image-full-name: ${{ steps.build.outputs.image-full-name }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Get build metadata
+        id: vars
+        run: |
+          VERSION=$(grep '^appVersion:' helm/Chart.yaml | cut -d'"' -f2)
+          echo "VERSION=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "FULL_SHA=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      - name: Build, push, sign
+        id: build
+        uses: didlawowo/workflow-ci/.github/actions/docker-build-push@main
+        with:
+          image-name: ${{ env.IMAGE_NAME }}
+          image-tag: ${{ needs.release-please.outputs.tag_name }}
+          push: "true"
+          sign: "true"
+          sbom: "true"
+          provenance: "true"
+          add-latest-tag: "true"
+          registry-username: ${{ secrets.DOCKER_USERNAME }}
+          registry-password: ${{ secrets.DOCKER_PASSWORD }}
+          cache-scope: oci-storage
+          build-args: |
+            VERSION=${{ steps.vars.outputs.VERSION }}
+            COMMIT=${{ steps.vars.outputs.FULL_SHA }}
+            BUILD_TIME=${{ steps.vars.outputs.BUILD_TIME }}
+
+  # Update Helm values for ArgoCD auto-sync
+  update-helm:
+    name: "Update Helm Values"
+    needs: [release-please, production-build]
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     permissions:
       contents: write
     steps:
@@ -17,66 +128,44 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-        with:
-          driver-opts: image=moby/buildkit:buildx-stable-1
-
-      - name: Login to DockerHub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-
-      - name: Get repository name, SHA and version
-        id: vars
+      - name: Update Helm values.yaml
         run: |
-          REPO_NAME=$(echo "${{ github.repository }}" | cut -d'/' -f2 | tr '[:upper:]' '[:lower:]')
-          echo "REPO_NAME=${REPO_NAME}" >> $GITHUB_OUTPUT
-          echo "SHORT_SHA=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
-          echo "FULL_SHA=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
-          echo "BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_OUTPUT
-          # Get version from Chart.yaml appVersion
-          VERSION=$(grep '^appVersion:' helm/Chart.yaml | cut -d'"' -f2)
-          echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
-
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ secrets.DOCKER_USERNAME }}/${{ steps.vars.outputs.REPO_NAME }}:${{ steps.vars.outputs.SHORT_SHA }}
-          build-args: |
-            VERSION=${{ steps.vars.outputs.VERSION }}
-            COMMIT=${{ steps.vars.outputs.FULL_SHA }}
-            BUILD_TIME=${{ steps.vars.outputs.BUILD_TIME }}
-          cache-from: type=gha,scope=oci-storage
-          cache-to: type=gha,mode=max,scope=oci-storage
-
-      - name: Update Helm values (main only)
-        if: github.ref == 'refs/heads/main'
-        run: |
-          # Install yq
           wget -q https://github.com/mikefarah/yq/releases/download/v4.35.1/yq_linux_amd64 -O /tmp/yq
           chmod +x /tmp/yq
 
+          REPO_NAME=$(echo "${{ github.repository }}" | cut -d'/' -f2 | tr '[:upper:]' '[:lower:]')
+
           # Update only the main application image (not sidecars like trivy)
-          # Using explicit path to avoid updating .trivy.image.tag
-          /tmp/yq e -i '(.image.repository) = "${{ secrets.DOCKER_USERNAME }}/${{ steps.vars.outputs.REPO_NAME }}"' helm/values.yaml
-          /tmp/yq e -i '(.image.tag) = "${{ steps.vars.outputs.SHORT_SHA }}"' helm/values.yaml
+          /tmp/yq e -i '(.image.repository) = "${{ secrets.DOCKER_USERNAME }}/'"${REPO_NAME}"'"' helm/values.yaml
+          /tmp/yq e -i '(.image.tag) = "${{ needs.release-please.outputs.tag_name }}"' helm/values.yaml
 
           echo "Updated values.yaml:"
           grep -A3 "^image:" helm/values.yaml
 
-      - name: Commit and push changes (main only)
-        if: github.ref == 'refs/heads/main'
+      - name: Commit and push changes
         run: |
           git config user.name "GitHub Actions"
           git config user.email "github-actions@github.com"
           git add helm/values.yaml
-          git diff --staged --quiet || git commit -m "chore: update image tag to ${{ steps.vars.outputs.SHORT_SHA }}"
+          git diff --staged --quiet || git commit -m "chore: update image tag to ${{ needs.release-please.outputs.tag_name }}"
           git push
+
+  summary:
+    name: "Release Summary"
+    if: always() && needs.release-please.outputs.release_created == 'true'
+    needs: [release-please, validation, production-build, update-helm]
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    steps:
+      - name: Create summary
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" << EOF
+          ## Production Release ${{ needs.release-please.outputs.tag_name }}
+
+          | Stage | Status |
+          |-------|--------|
+          | **Validation** | ${{ needs.validation.result == 'success' && '✅' || '❌' }} |
+          | **Docker** | ${{ needs.production-build.result == 'success' && '✅' || '❌' }} |
+          | **Helm Update** | ${{ needs.update-helm.result == 'success' && '✅' || '❌' }} |
+          | **Image** | \`${{ needs.production-build.outputs.image-full-name }}\` |
+          | **Signed** | ✅ Cosign |
+          EOF

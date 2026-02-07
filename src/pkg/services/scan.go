@@ -201,10 +201,16 @@ func (s *ScanService) executeScan(name, ref, digest string) (*models.ScanResult,
 
 	// Build the image reference pointing to our own registry so Trivy
 	// pulls layers from localhost, not from the upstream registry.
+	// Always prefer tag over digest to avoid multi-arch manifest index issues
+	// (Trivy cannot resolve a platform from a bare digest on a manifest list).
 	registryHost := fmt.Sprintf("localhost:%d", s.config.Server.Port)
+	useDigest := false
 	var imageRef string
-	if strings.HasPrefix(digest, "sha256:") {
+	if ref != "" && !strings.HasPrefix(ref, "sha256:") {
+		imageRef = fmt.Sprintf("%s/%s:%s", registryHost, name, ref)
+	} else if strings.HasPrefix(digest, "sha256:") {
 		imageRef = fmt.Sprintf("%s/%s@%s", registryHost, name, digest)
+		useDigest = true
 	} else {
 		imageRef = fmt.Sprintf("%s/%s:%s", registryHost, name, ref)
 	}
@@ -217,8 +223,18 @@ func (s *ScanService) executeScan(name, ref, digest string) (*models.ScanResult,
 		"--severity", "CRITICAL,HIGH,MEDIUM,LOW",
 		"--no-progress",
 		"--insecure",
-		imageRef,
+		"--image-src", "remote",
+		"--scanners", "vuln",
+		"--skip-db-update",
 	}
+
+	// When using a digest, the manifest may be a multi-arch index.
+	// Trivy needs --platform to pick the right child manifest.
+	if useDigest {
+		args = append(args, "--platform", "linux/amd64")
+	}
+
+	args = append(args, imageRef)
 
 	s.log.WithFunc().WithFields(logrus.Fields{
 		"command": "trivy " + strings.Join(args, " "),
