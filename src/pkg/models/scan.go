@@ -56,8 +56,8 @@ type TrivyReport struct {
 
 // TrivyResult represents a single target result from Trivy
 type TrivyResult struct {
-	Target          string              `json:"Target"`
-	Type            string              `json:"Type"`
+	Target          string               `json:"Target"`
+	Type            string               `json:"Type"`
 	Vulnerabilities []TrivyVulnerability `json:"Vulnerabilities"`
 }
 

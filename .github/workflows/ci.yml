@@ -64,6 +64,7 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           working-directory: ${{ env.GO_WORKING_DIR }}
+          golangci-lint-version: "v1.64.8"
 
   docker-build:
     name: "Docker Build & Scan"

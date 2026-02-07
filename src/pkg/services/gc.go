@@ -18,13 +18,13 @@ import (
 
 // GCResult contains the results of a garbage collection run
 type GCResult struct {
-	OrphanBlobsDeleted   int   `json:"orphanBlobsDeleted"`
-	OrphanBlobsBytes     int64 `json:"orphanBlobsBytes"`
-	StaleImagesDeleted   int   `json:"staleImagesDeleted"`
-	StaleImagesBytes     int64 `json:"staleImagesBytes"`
-	TotalBytesReclaimed  int64 `json:"totalBytesReclaimed"`
-	DurationMs           int64 `json:"durationMs"`
-	Errors               []string `json:"errors,omitempty"`
+	OrphanBlobsDeleted  int      `json:"orphanBlobsDeleted"`
+	OrphanBlobsBytes    int64    `json:"orphanBlobsBytes"`
+	StaleImagesDeleted  int      `json:"staleImagesDeleted"`
+	StaleImagesBytes    int64    `json:"staleImagesBytes"`
+	TotalBytesReclaimed int64    `json:"totalBytesReclaimed"`
+	DurationMs          int64    `json:"durationMs"`
+	Errors              []string `json:"errors,omitempty"`
 }
 
 // GCService handles garbage collection for orphan blobs and stale images
@@ -92,11 +92,11 @@ func (gc *GCService) Run(dryRun bool) (*GCResult, error) {
 	result.DurationMs = time.Since(start).Milliseconds()
 
 	gc.log.WithFields(logrus.Fields{
-		"orphanBlobs":   result.OrphanBlobsDeleted,
-		"staleImages":   result.StaleImagesDeleted,
+		"orphanBlobs":    result.OrphanBlobsDeleted,
+		"staleImages":    result.StaleImagesDeleted,
 		"bytesReclaimed": result.TotalBytesReclaimed,
-		"durationMs":    result.DurationMs,
-		"dryRun":        dryRun,
+		"durationMs":     result.DurationMs,
+		"dryRun":         dryRun,
 	}).Info("Garbage collection completed")
 
 	return result, nil

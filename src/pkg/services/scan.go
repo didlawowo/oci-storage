@@ -20,13 +20,13 @@ import (
 
 // ScanService handles Trivy vulnerability scanning and security gate decisions
 type ScanService struct {
-	config         *config.Config
-	log            *utils.Logger
-	pathManager    *utils.PathManager
-	scanMutex      sync.RWMutex
-	scanSem        chan struct{}      // limits concurrent scans
-	inProgressMu   sync.RWMutex       // protects inProgress map
-	inProgress     map[string]bool    // tracks digests currently being scanned
+	config       *config.Config
+	log          *utils.Logger
+	pathManager  *utils.PathManager
+	scanMutex    sync.RWMutex
+	scanSem      chan struct{}   // limits concurrent scans
+	inProgressMu sync.RWMutex    // protects inProgress map
+	inProgress   map[string]bool // tracks digests currently being scanned
 }
 
 // NewScanService creates a new ScanService
