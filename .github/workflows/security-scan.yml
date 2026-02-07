@@ -36,7 +36,7 @@ env:
 jobs:
   filesystem-security:
     name: "Filesystem Security"
-    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    runs-on: arc-runner-oci-storage
     permissions:
       contents: read
       security-events: write
@@ -68,7 +68,7 @@ jobs:
 
   code-security:
     name: "Code Security"
-    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    runs-on: arc-runner-oci-storage
     permissions:
       contents: read
       security-events: write
@@ -91,7 +91,7 @@ jobs:
     name: "Compliance"
     needs: [filesystem-security, code-security]
     if: always()
-    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    runs-on: arc-runner-oci-storage
     steps:
       - name: Summary
         run: |

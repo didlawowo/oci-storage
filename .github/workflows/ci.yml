@@ -22,7 +22,7 @@ env:
 jobs:
   tests:
     name: "Tests & Coverage"
-    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    runs-on: arc-runner-oci-storage
     permissions:
       contents: read
       pull-requests: write
@@ -46,7 +46,7 @@ jobs:
 
   quality-security:
     name: "Quality & Security"
-    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    runs-on: arc-runner-oci-storage
     permissions:
       contents: read
       security-events: write
@@ -69,7 +69,7 @@ jobs:
     name: "Docker Build & Scan"
     needs: [tests]
     if: always() && needs.tests.result == 'success'
-    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    runs-on: arc-runner-oci-storage
     permissions:
       contents: read
       security-events: write
@@ -112,7 +112,7 @@ jobs:
     name: "Pipeline Summary"
     if: always()
     needs: [tests, quality-security, docker-build]
-    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    runs-on: arc-runner-oci-storage
     steps:
       - name: Create summary
         run: |

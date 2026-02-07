@@ -28,7 +28,7 @@ env:
 jobs:
   release-please:
     name: "Release Please"
-    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    runs-on: arc-runner-oci-storage
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}
@@ -54,7 +54,7 @@ jobs:
     name: "Final Validation"
     needs: release-please
     if: needs.release-please.outputs.release_created == 'true'
-    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    runs-on: arc-runner-oci-storage
     permissions:
       contents: read
       security-events: write
@@ -79,7 +79,7 @@ jobs:
     name: "Production Docker Build"
     needs: [release-please, validation]
     if: needs.release-please.outputs.release_created == 'true'
-    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    runs-on: arc-runner-oci-storage
     outputs:
       digest: ${{ steps.build.outputs.digest }}
       image-full-name: ${{ steps.build.outputs.image-full-name }}
@@ -120,7 +120,7 @@ jobs:
     name: "Update Helm Values"
     needs: [release-please, production-build]
     if: needs.release-please.outputs.release_created == 'true'
-    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    runs-on: arc-runner-oci-storage
     permissions:
       contents: write
     steps:
@@ -154,7 +154,7 @@ jobs:
     name: "Release Summary"
     if: always() && needs.release-please.outputs.release_created == 'true'
     needs: [release-please, validation, production-build, update-helm]
-    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    runs-on: arc-runner-oci-storage
     steps:
       - name: Create summary
         run: |
