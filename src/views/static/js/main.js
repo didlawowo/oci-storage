@@ -378,8 +378,41 @@ async function purgeCache() {
 // Global state for image filtering, sorting, and view mode
 let allDockerImages = [];
 let currentImageFilter = 'all';
+let currentImageSearch = '';
 let currentSortOrder = 'date-desc';
 let currentViewMode = 'list';
+
+/**
+ * Filter charts by search query (client-side)
+ * @param {string} query - Search text
+ */
+function filterCharts(query) {
+  const cards = document.querySelectorAll('[data-chart-name]');
+  const q = query.toLowerCase().trim();
+  let visible = 0;
+
+  cards.forEach(card => {
+    const name = (card.dataset.chartName || '').toLowerCase();
+    const desc = (card.querySelector('.description') || {}).textContent || '';
+    const match = !q || name.includes(q) || desc.toLowerCase().includes(q);
+    card.style.display = match ? '' : 'none';
+    if (match) visible++;
+  });
+
+  const countEl = document.getElementById('chartCount');
+  if (countEl) {
+    countEl.textContent = q ? `${visible} / ${cards.length} charts` : `${cards.length} charts`;
+  }
+}
+
+/**
+ * Filter images by search query
+ * @param {string} query - Search text
+ */
+function filterImagesBySearch(query) {
+  currentImageSearch = query.toLowerCase().trim();
+  renderFilteredImages();
+}
 
 /**
  * Fetch and display all Docker images (pushed + cached from proxy)
@@ -600,6 +633,16 @@ function renderFilteredImages() {
     filteredImages = filteredImages.filter(img => img.isPushed === true);
   } else if (currentImageFilter === 'proxy') {
     filteredImages = filteredImages.filter(img => img.isPushed !== true);
+  }
+
+  // Apply search filter
+  if (currentImageSearch) {
+    filteredImages = filteredImages.filter(img => {
+      const name = (img.name || '').toLowerCase();
+      const tag = (img.tag || '').toLowerCase();
+      const registry = (img.sourceRegistry || '').toLowerCase();
+      return name.includes(currentImageSearch) || tag.includes(currentImageSearch) || registry.includes(currentImageSearch);
+    });
   }
 
   // Deduplicate by digest
@@ -989,6 +1032,13 @@ document.addEventListener("DOMContentLoaded", function () {
     });
   }
 
+  // Initialize chart count
+  const chartCountEl = document.getElementById('chartCount');
+  const chartCards = document.querySelectorAll('[data-chart-name]');
+  if (chartCountEl && chartCards.length > 0) {
+    chartCountEl.textContent = `${chartCards.length} charts`;
+  }
+
   // Initialiser le cache des versions
   window.chartVersions = {};
 
@@ -1013,6 +1063,7 @@ document.addEventListener("DOMContentLoaded", function () {
 // =============================================
 
 let currentScanFilter = "pending";
+let currentScanSearch = "";
 let allScanDecisions = [];
 let scanConfirmCallback = null;
 
@@ -1081,21 +1132,55 @@ function filterScanDecisions(filter) {
   loadScanDecisions(filter);
 }
 
+/**
+ * Filter scan decisions by search query
+ * @param {string} query - Search text
+ */
+function filterScanBySearch(query) {
+  currentScanSearch = query.toLowerCase().trim();
+  renderScanDecisions(allScanDecisions);
+}
+
 function renderScanDecisions(decisions) {
   const tbody = document.getElementById("scanDecisionsBody");
   const noResults = document.getElementById("noScanResults");
   const container = document.getElementById("scanDecisionsContainer");
+  const scanCountEl = document.getElementById("scanCount");
 
-  if (!decisions || decisions.length === 0) {
-    noResults.style.display = "flex";
-    container.style.display = "none";
+  // Apply search filter
+  let filtered = decisions || [];
+  if (currentScanSearch) {
+    filtered = filtered.filter(d => {
+      const name = (d.imageName || '').toLowerCase();
+      const tag = (d.tag || '').toLowerCase();
+      const status = (d.status || '').toLowerCase();
+      return name.includes(currentScanSearch) || tag.includes(currentScanSearch) || status.includes(currentScanSearch);
+    });
+  }
+
+  if (scanCountEl) {
+    if (currentScanSearch && decisions && decisions.length > 0) {
+      scanCountEl.textContent = `${filtered.length} / ${decisions.length} results`;
+    } else {
+      scanCountEl.textContent = filtered.length > 0 ? `${filtered.length} results` : '';
+    }
+  }
+
+  if (!filtered || filtered.length === 0) {
+    if (!decisions || decisions.length === 0) {
+      noResults.style.display = "flex";
+    } else {
+      noResults.style.display = "none";
+    }
+    container.style.display = currentScanSearch && decisions && decisions.length > 0 ? "block" : "none";
+    tbody.innerHTML = currentScanSearch ? '<tr><td colspan="7" class="text-center py-8 text-gray-500">No matching results</td></tr>' : '';
     return;
   }
 
   noResults.style.display = "none";
   container.style.display = "block";
 
-  tbody.innerHTML = decisions.map(d => {
+  tbody.innerHTML = filtered.map(d => {
     const sr = d.scanResult || {};
     const statusColors = {
       pending: "bg-yellow-100 text-yellow-800",

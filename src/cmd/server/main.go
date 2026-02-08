@@ -132,6 +132,11 @@ func main() {
 	// Services
 	chartService, imageService, indexService, proxyService, backupService, scanService := setupServices(cfg, log)
 
+	// Ensure index.yaml exists at startup
+	if err := indexService.EnsureIndexExists(); err != nil {
+		log.WithError(err).Error("Failed to ensure index.yaml exists")
+	}
+
 	// Handlers
 	helmHandler, imageHandler, ociHandler, configHandler, indexHandler, backupHandler, cacheHandler, gcHandler, scanHandler := setupHandlers(
 		chartService,

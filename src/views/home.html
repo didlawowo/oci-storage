@@ -13,47 +13,45 @@
 
 
 <body class="bg-gray-100">
-    <!-- views/home.html - Navigation bar with integrated upload -->
+    <!-- views/home.html - Navigation bar -->
     <nav class="bg-blue-600 text-white p-4 shadow-lg">
-        <div class="container mx-auto flex justify-between items-center">
-            <div class="flex items-center">
+        <div class="container mx-auto flex items-center gap-6">
+            <div class="flex items-center shrink-0">
                 <img src="/favicon.ico" alt="Logo" class="h-8 w-8 inline-block mr-2">
                 <h1 class="text-2xl font-bold inline-block mr-2">oci storage</h1>
                 <span class="text-xs bg-blue-800 px-2 py-1 rounded">{{.Version}}</span>
-
-                <!-- Navigation tabs -->
-                <div class="flex space-x-4 ml-8">
-                    <button onclick="showTab('charts')" id="chartsTab" class="tab-btn active px-4 py-2 rounded bg-blue-700 hover:bg-blue-800">
-                        <i class="material-icons align-middle mr-1">sailing</i> Helm Charts
-                    </button>
-                    <button onclick="showTab('images')" id="imagesTab" class="tab-btn px-4 py-2 rounded hover:bg-blue-700">
-                        <i class="material-icons align-middle mr-1">inventory_2</i> Docker Images
-                    </button>
-                    <button onclick="showTab('security')" id="securityTab" class="tab-btn px-4 py-2 rounded hover:bg-blue-700">
-                        <i class="material-icons align-middle mr-1">security</i> Security Gate
-                        <span id="pendingBadge" class="hidden ml-1 bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full">0</span>
-                    </button>
-                </div>
-
-                <!-- Backup button -->
-                <form id="backupForm" action="/backup" method="POST" enctype="multipart/form-data"
-                    class="inline-block ml-4">
-                    <button id="backupButton" class="btn btn-secondary" onclick="performBackup()">
-                        Backup
-                    </button>
-                </form>
             </div>
 
-            <!-- Upload integrated in navbar -->
-            <form id="uploadForm" action="/chart" method="POST" enctype="multipart/form-data" class="flex items-center">
-                <label for="chartUpload" class="mr-2 font-medium text-white">Upload Chart:</label>
-                <input id="chartUpload" type="file" name="chart" accept=".tgz" required class="
-                text-white
-                file:mr-4 file:py-2 file:px-4
-                file:rounded file:border-0
-                file:bg-blue-700 file:text-white
-                hover:file:bg-blue-800 cursor-pointer" onchange="this.form.submit()">
-            </form>
+            <!-- Navigation tabs -->
+            <div class="flex space-x-2">
+                <button onclick="showTab('charts')" id="chartsTab" class="tab-btn active px-4 py-2 rounded bg-blue-700 hover:bg-blue-800 whitespace-nowrap">
+                    <i class="material-icons align-middle mr-1 text-sm">sailing</i> Helm Charts
+                </button>
+                <button onclick="showTab('images')" id="imagesTab" class="tab-btn px-4 py-2 rounded hover:bg-blue-700 whitespace-nowrap">
+                    <i class="material-icons align-middle mr-1 text-sm">inventory_2</i> Docker Images
+                </button>
+                <button onclick="showTab('security')" id="securityTab" class="tab-btn px-4 py-2 rounded hover:bg-blue-700 whitespace-nowrap">
+                    <i class="material-icons align-middle mr-1 text-sm">security</i> Security Gate
+                    <span id="pendingBadge" class="hidden ml-1 bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full">0</span>
+                </button>
+            </div>
+
+            <div class="ml-auto flex items-center gap-3">
+                <!-- Backup button -->
+                <form id="backupForm" action="/backup" method="POST" enctype="multipart/form-data" class="inline-block">
+                    <button id="backupButton" class="btn btn-secondary px-3 py-2 rounded bg-blue-700 hover:bg-blue-800 text-sm" onclick="performBackup()">
+                        <i class="material-icons align-middle text-sm mr-1">backup</i> Backup
+                    </button>
+                </form>
+
+                <!-- Upload button (charts tab only) -->
+                <form id="uploadForm" action="/chart" method="POST" enctype="multipart/form-data" class="inline-block">
+                    <label for="chartUpload" class="px-3 py-2 rounded bg-blue-700 hover:bg-blue-800 text-sm cursor-pointer inline-flex items-center gap-1">
+                        <i class="material-icons align-middle text-sm">upload</i> Upload Chart
+                    </label>
+                    <input id="chartUpload" type="file" name="chart" accept=".tgz" required class="hidden" onchange="this.form.submit()">
+                </form>
+            </div>
         </div>
     </nav>
     <div id="errorModal" class="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center hidden z-50" style="display: none;">
@@ -76,6 +74,15 @@
         <!-- Charts Section -->
         <div id="chartsSection">
             {{if .Charts}}
+            <!-- Search bar for charts -->
+            <div class="mb-4 flex items-center gap-4">
+                <div class="relative flex-1 max-w-md">
+                    <i class="material-icons absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">search</i>
+                    <input type="text" id="chartSearch" placeholder="Search charts..." oninput="filterCharts(this.value)"
+                        class="w-full pl-9 pr-4 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                </div>
+                <span id="chartCount" class="text-sm text-gray-500"></span>
+            </div>
             <!-- List Charts Section -->
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                 {{range .Charts}}
@@ -136,6 +143,15 @@
         <div id="imagesSection" style="display: none;">
             <!-- Filter Bar -->
             <div class="mb-4 flex items-center gap-4 flex-wrap">
+                <!-- Search for images -->
+                <div class="relative">
+                    <i class="material-icons absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">search</i>
+                    <input type="text" id="imageSearch" placeholder="Search images..." oninput="filterImagesBySearch(this.value)"
+                        class="pl-9 pr-4 py-1.5 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent w-64">
+                </div>
+
+                <div class="border-l border-gray-300 h-6 mx-2"></div>
+
                 <span class="text-sm font-medium text-gray-700">Filter:</span>
                 <div class="flex gap-2">
                     <button onclick="filterImages('all')" id="filterAll" class="filter-btn active px-3 py-1.5 text-sm rounded-full bg-gray-700 text-white transition-colors">
@@ -236,14 +252,23 @@
                 </div>
             </div>
 
-            <!-- Filter tabs for security -->
-            <div class="mb-4 flex gap-2">
-                <button onclick="filterScanDecisions('pending')" id="scanFilterPending" class="scan-filter-btn px-3 py-1.5 text-sm rounded-full bg-yellow-500 text-white">
-                    Pending Review
-                </button>
-                <button onclick="filterScanDecisions('all')" id="scanFilterAll" class="scan-filter-btn px-3 py-1.5 text-sm rounded-full bg-gray-200 text-gray-700 hover:bg-gray-300">
-                    All Decisions
-                </button>
+            <!-- Filter tabs and search for security -->
+            <div class="mb-4 flex items-center gap-4">
+                <div class="flex gap-2">
+                    <button onclick="filterScanDecisions('pending')" id="scanFilterPending" class="scan-filter-btn px-3 py-1.5 text-sm rounded-full bg-yellow-500 text-white">
+                        Pending Review
+                    </button>
+                    <button onclick="filterScanDecisions('all')" id="scanFilterAll" class="scan-filter-btn px-3 py-1.5 text-sm rounded-full bg-gray-200 text-gray-700 hover:bg-gray-300">
+                        All Decisions
+                    </button>
+                </div>
+                <div class="border-l border-gray-300 h-6 mx-2"></div>
+                <div class="relative">
+                    <i class="material-icons absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">search</i>
+                    <input type="text" id="scanSearch" placeholder="Search images, tags..." oninput="filterScanBySearch(this.value)"
+                        class="pl-9 pr-4 py-1.5 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent w-64">
+                </div>
+                <span id="scanCount" class="text-sm text-gray-500 ml-auto"></span>
             </div>
 
             <!-- Decisions Table -->
