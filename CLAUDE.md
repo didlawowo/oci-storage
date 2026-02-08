@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## ⛔ STRICT RULES - DO NOT VIOLATE
+## Strict Rules
 
 - **NEVER run `helm upgrade`, `helm install`, or `task helm-install`** - User deploys manually
 - **NEVER run `task build`** - User builds manually
@@ -11,76 +11,84 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-oci storage is a lightweight OCI-compatible registry for storing and managing Helm charts. It's built in Go using the Fiber web framework and provides both a web interface and REST API for chart management.
+OCI-compatible registry for storing Helm charts and container images, with a pull-through proxy/cache for upstream registries. Built in Go 1.24 with the Fiber v2 web framework. Deployed to Kubernetes via ArgoCD (commit to main triggers auto-sync).
 
 ## Development Commands
 
-Use the Taskfile for common development tasks:
+```bash
+task run-dev          # Start dev server with Air hot reload (runs from src/)
+task test-unit        # Run unit tests: go test ./pkg/... -v (from src/)
+task test-e2e         # Run E2E tests via tests/test-e2e.sh
+task helm-template    # Render Helm templates to helm/rendered.yaml
+task start / stop     # Docker compose up/down
+```
 
-- `task run-dev` - Start development server with hot reload using Air
-- `task build` - Build and push Docker image  
-- `task start` - Start Docker container via docker-compose
-- `task stop` - Stop Docker container
-- `task helm-install` - Deploy to Kubernetes cluster (local testing only)
-- `task helm-template` - Generate Helm templates for debugging
+Run a single test file or function directly:
+```bash
+cd src && go test ./pkg/handlers/ -run TestSpecificFunction -v
+```
 
-**IMPORTANT**: Do NOT deploy oci-storage with `task helm-install` in production. ArgoCD manages the deployment - just commit and push changes, ArgoCD will sync automatically.
+The `tests/` directory is a **separate Go module** (`oci-storage-tests`) with `replace oci-storage => ../src`. Run integration tests from there:
+```bash
+cd tests && go test -v -run TestAuth ./...
+```
 
-For testing Helm functionality:
-- `task test-upload-chart` - Test chart upload via HTTP
-- `task test-push-chart` - Test chart push via OCI protocol
-- `task test-pull-chart` - Test chart pull via OCI protocol
+CI uses `golangci-lint v1.64.8` for linting and runs from the `src/` working directory.
 
 ## Architecture
 
-The application follows a layered architecture:
+### Module Structure
 
-**Main Entry Point**: `src/cmd/server/main.go` - Sets up services, handlers, and HTTP routes
+Two Go modules exist:
+- `src/` - Main application module (`module oci-storage`)
+- `tests/` - Integration test module (`module oci-storage-tests`, replaces `oci-storage => ../src`)
 
-**Core Services** (in `src/pkg/services/`):
-- `ChartService` - Manages chart storage and retrieval
-- `IndexService` - Maintains Helm repository index.yaml
-- `BackupService` - Handles cloud backup/restore operations
+### Dependency Injection & Service Wiring (`src/cmd/server/main.go`)
 
-**Handlers** (in `src/pkg/handlers/`):
-- `HelmHandler` - Traditional Helm repository API (/chart, /index.yaml)
-- `OCIHandler` - OCI registry protocol implementation (/v2/*)
-- `BackupHandler` - Backup/restore endpoints
-- `ConfigHandler` - Configuration endpoints
+Services are created in `setupServices()` with a circular dependency pattern: `ChartService` needs `IndexService` and vice versa. Resolution: create a temporary `ChartService` with nil `IndexService`, create `IndexService` with that, then create the final `ChartService` with the real `IndexService`.
 
-**Key Integrations**:
-- Services are injected with circular dependency resolution (ChartService ↔ IndexService)
-- Authentication middleware applies only to OCI routes (/v2/*)
-- Static files served from `views/static/`
-- Templates in `views/` directory using Fiber's HTML template engine
+Optional services (`ProxyService`, `ScanService`) are only instantiated when enabled in config.
 
-## Configuration
+### Interfaces (`src/pkg/interfaces/interfaces.go`)
 
-Main config file: `src/config/config.yaml`
-Auth config file: `src/config/auth.yaml` (loaded separately)
+All services have interfaces: `ChartServiceInterface`, `ImageServiceInterface`, `IndexServiceInterface`, `ProxyServiceInterface`, `ScanServiceInterface`. Handlers accept interfaces, mocks implement them via testify (`src/pkg/handlers/mocks.go`).
 
-Configuration supports environment variable overrides for server port and logging level.
+### Handler/Route Organization
 
-## Testing
+Routes are defined directly in `main.go`. Key route groups:
+- `/` - Web UI (Fiber HTML templates from `views/`)
+- `/chart/*`, `/charts`, `/index.yaml` - Helm repository API
+- `/image/*` - Docker image browsing (wildcard routing for nested proxy paths)
+- `/v2/*` - OCI registry protocol (auth middleware applied to this group only)
+- `/cache/*`, `/gc/*` - Proxy cache management
+- `/api/scan/*` - Trivy vulnerability scanning & security gate
+- `/backup`, `/restore` - Cloud backup operations
 
-Go tests use testify framework. Mock implementations are in `src/pkg/handlers/mocks.go`.
+OCI routes have multiple nesting levels (1-5 path segments) to support `proxy/registry/namespace/image` patterns. These are separate handler methods (e.g., `HandleManifest`, `HandleManifestNested`, `HandleManifestDeepNested`, etc.).
 
-Run tests with standard Go commands:
-- `task test` - Run all Go tests
-- `task test-unit` - Run unit tests only (pkg/*)
-- `task test-auth` - Run authentication tests
-- `task test-proxy` - Run Docker proxy integration tests (requires running server)
-- `task test-proxy-ci` - Run proxy tests with configurable URL for CI
+### Authentication
 
-For proxy tests, you can configure:
-- `PORTAL_URL` - Portal URL (default: http://localhost:3030)
-- `PORTAL_AUTH` - Auth credentials (default: admin:admin123)
+Basic auth middleware (`src/pkg/middlewares/auth.go`) applies only to `/v2/*` routes. GET/HEAD requests allow anonymous access; write operations (PUT/POST/DELETE/PATCH) require credentials. Auth users loaded from: `HELM_USERS` env var > `HELM_USER_N_*` prefixed env vars > `config/auth.yaml` file.
 
-## Key Technical Details
+### PathManager (`src/pkg/utils/paths.go`)
 
-- Uses Go modules with `oci-storage` as module name
-- Port 3030 is hardcoded in main.go and used throughout
-- Chart storage path configurable via config.yaml
-- Supports both AWS S3 and GCP Cloud Storage for backups
-- OCI protocol implementation handles manifest and blob operations
-- Web interface provides chart browsing and download functionality
+Central utility managing storage directory structure under `data/`: `temp/`, `blobs/`, `manifests/`, `charts/`, `images/`, `cache/metadata/`. All services use PathManager for file path resolution.
+
+### Configuration
+
+- Main config: `src/config/config.yaml` (loaded at startup, most values overridable via env vars)
+- Auth config: `src/config/auth.yaml` (separate file, path via `AUTH_FILE` env var)
+- Config struct: `src/config/config.go` - includes `Server`, `Storage`, `Logging`, `Auth`, `Backup`, `Proxy`, `Trivy` sections
+- Backup supports AWS S3, GCP Cloud Storage, and Azure Blob Storage
+
+### Version Info
+
+Build-time injection via ldflags into `src/pkg/version/version.go`. The Dockerfile and CI pass `VERSION`, `COMMIT`, `BUILD_TIME` args.
+
+### Key Technical Details
+
+- Port 3030 is hardcoded in `main.go`
+- Body limit is 1GB (for large Docker image layers)
+- Proxy has concurrency limiting (3 parallel blob downloads) and dynamic timeouts based on blob size
+- Logging uses logrus with a custom `Logger` wrapper (`src/pkg/utils/logger.go`)
+- Code comments are a mix of French and English

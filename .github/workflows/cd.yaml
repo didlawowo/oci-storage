@@ -140,14 +140,19 @@ jobs:
           /tmp/yq e -i '(.image.repository) = "${{ secrets.DOCKER_USERNAME }}/'"${REPO_NAME}"'"' helm/values.yaml
           /tmp/yq e -i '(.image.tag) = "${{ needs.release-please.outputs.tag_name }}"' helm/values.yaml
 
+          # Keep appVersion in sync with release tag
+          /tmp/yq e -i '.appVersion = "${{ needs.release-please.outputs.version }}"' helm/Chart.yaml
+
           echo "Updated values.yaml:"
           grep -A3 "^image:" helm/values.yaml
+          echo "Updated Chart.yaml appVersion:"
+          grep 'appVersion' helm/Chart.yaml
 
       - name: Commit and push changes
         run: |
           git config user.name "GitHub Actions"
           git config user.email "github-actions@github.com"
-          git add helm/values.yaml
+          git add helm/values.yaml helm/Chart.yaml
           git diff --staged --quiet || git commit -m "chore: update image tag to ${{ needs.release-please.outputs.tag_name }}"
           git push
 
