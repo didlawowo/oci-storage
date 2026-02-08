@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.0](https://github.com/didlawowo/oci-storage/compare/v1.1.0...v1.2.0) (2026-02-08)
+
+
+### Features
+
+* **cd:** améliorer la gestion des versions et de l'infrastructure ([#27](https://github.com/didlawowo/oci-storage/issues/27)) ([c41448f](https://github.com/didlawowo/oci-storage/commit/c41448fa5e10d6e12d2aa8991acabeda021802ae))
+
 ## [1.1.0](https://github.com/didlawowo/oci-storage/compare/v1.0.0...v1.1.0) (2026-02-08)
 
 
