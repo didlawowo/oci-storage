@@ -154,6 +154,7 @@ jobs:
           git config user.email "github-actions@github.com"
           git add helm/values.yaml helm/Chart.yaml
           git diff --staged --quiet || git commit -m "chore: update image tag to ${{ needs.release-please.outputs.tag_name }}"
+          git pull --rebase origin main
           git push
 
   summary:
