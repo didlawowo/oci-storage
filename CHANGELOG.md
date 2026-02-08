@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/didlawowo/oci-storage/compare/v1.0.0...v1.1.0) (2026-02-08)
+
+
+### Features
+
+* **server:** ajouter une vérification de l'existence de l'index.yaml au démarrage ([#25](https://github.com/didlawowo/oci-storage/issues/25)) ([7cf7cdc](https://github.com/didlawowo/oci-storage/commit/7cf7cdc30ffd0f63059f45431d30c91d8e25ac2e))
+
 ## 1.0.0 (2026-02-08)
 
 
