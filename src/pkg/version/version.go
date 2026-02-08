@@ -19,12 +19,16 @@ func Info() map[string]string {
 	}
 }
 
-// String returns a formatted version string
+// String returns the version tag (e.g. "v1.0.0")
 func String() string {
+	return Version
+}
+
+// StringWithCommit returns version with short commit hash (e.g. "v1.0.0-091fa6d")
+func StringWithCommit() string {
 	if Commit == "unknown" || Commit == "" {
 		return Version
 	}
-	// Show short commit hash
 	shortCommit := Commit
 	if len(Commit) > 7 {
 		shortCommit = Commit[:7]
