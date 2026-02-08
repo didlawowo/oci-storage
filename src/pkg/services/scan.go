@@ -189,6 +189,52 @@ func (s *ScanService) ScanImage(name, ref, digest string) {
 	}()
 }
 
+// detectImagePlatform reads stored image metadata to determine the actual platform.
+// Returns "os/architecture" (e.g. "linux/arm64"). Falls back to "linux/amd64".
+func (s *ScanService) detectImagePlatform(name, ref string) string {
+	defaultPlatform := "linux/amd64"
+
+	// Try to read image metadata from disk
+	tag := ref
+	if tag == "" || strings.HasPrefix(tag, "sha256:") {
+		tag = "latest"
+	}
+	metadataPath := filepath.Join(s.pathManager.GetBasePath(), "images", name, "tags", tag+".json")
+
+	data, err := os.ReadFile(metadataPath)
+	if err != nil {
+		s.log.WithFunc().WithField("path", metadataPath).Debug("Could not read image metadata for platform detection, using default")
+		return defaultPlatform
+	}
+
+	var metadata models.ImageMetadata
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		s.log.WithFunc().WithError(err).Debug("Could not parse image metadata for platform detection, using default")
+		return defaultPlatform
+	}
+
+	// Use platforms from manifest list if available
+	if len(metadata.Platforms) > 0 {
+		p := metadata.Platforms[0]
+		platform := fmt.Sprintf("%s/%s", p.OS, p.Architecture)
+		s.log.WithFunc().WithField("platform", platform).Debug("Detected image platform from metadata")
+		return platform
+	}
+
+	// Fall back to config-level architecture info
+	if metadata.Config != nil && metadata.Config.Architecture != "" {
+		os_ := metadata.Config.OS
+		if os_ == "" {
+			os_ = "linux"
+		}
+		platform := fmt.Sprintf("%s/%s", os_, metadata.Config.Architecture)
+		s.log.WithFunc().WithField("platform", platform).Debug("Detected image platform from config")
+		return platform
+	}
+
+	return defaultPlatform
+}
+
 // executeScan runs Trivy CLI in client-server mode to scan an image.
 // In this mode, the Trivy CLI runs locally and connects to the Trivy server
 // (sidecar) for the vulnerability database. Scanning happens client-side.
@@ -204,16 +250,18 @@ func (s *ScanService) executeScan(name, ref, digest string) (*models.ScanResult,
 	// Always prefer tag over digest to avoid multi-arch manifest index issues
 	// (Trivy cannot resolve a platform from a bare digest on a manifest list).
 	registryHost := fmt.Sprintf("localhost:%d", s.config.Server.Port)
-	useDigest := false
 	var imageRef string
 	if ref != "" && !strings.HasPrefix(ref, "sha256:") {
 		imageRef = fmt.Sprintf("%s/%s:%s", registryHost, name, ref)
 	} else if strings.HasPrefix(digest, "sha256:") {
 		imageRef = fmt.Sprintf("%s/%s@%s", registryHost, name, digest)
-		useDigest = true
 	} else {
 		imageRef = fmt.Sprintf("%s/%s:%s", registryHost, name, ref)
 	}
+
+	// Detect the actual platform from stored image metadata.
+	// This avoids hardcoding linux/amd64 which fails for arm64-only images.
+	platform := s.detectImagePlatform(name, ref)
 
 	// Build trivy command arguments
 	args := []string{
@@ -226,12 +274,7 @@ func (s *ScanService) executeScan(name, ref, digest string) (*models.ScanResult,
 		"--image-src", "remote",
 		"--scanners", "vuln",
 		"--skip-db-update",
-	}
-
-	// When using a digest, the manifest may be a multi-arch index.
-	// Trivy needs --platform to pick the right child manifest.
-	if useDigest {
-		args = append(args, "--platform", "linux/amd64")
+		"--platform", platform,
 	}
 
 	args = append(args, imageRef)
