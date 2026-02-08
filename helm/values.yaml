@@ -109,6 +109,8 @@ readinessProbe:
   failureThreshold: 3
 ingress:
   host: oci-storage.example.com
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-cloudflare
   tls:
     enabled: true
     secretName: ""

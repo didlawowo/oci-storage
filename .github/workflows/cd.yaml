@@ -92,8 +92,7 @@ jobs:
       - name: Get build metadata
         id: vars
         run: |
-          VERSION=$(grep '^appVersion:' helm/Chart.yaml | cut -d'"' -f2)
-          echo "VERSION=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "VERSION=${{ needs.release-please.outputs.version }}" >> "$GITHUB_OUTPUT"
           echo "FULL_SHA=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           echo "BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
 
