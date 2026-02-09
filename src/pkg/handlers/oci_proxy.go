@@ -221,9 +221,16 @@ func (h *OCIHandler) proxyManifest(c *fiber.Ctx, name, reference string) error {
 		go h.cacheManifest(name, reference, manifestData, registryURL, upstreamName)
 	}
 
-	// Trigger async vulnerability scan for proxied images
+	// Trigger async vulnerability scan for proxied images (skip Helm charts)
 	if h.scanService != nil && h.scanService.IsEnabled() {
-		h.scanService.ScanImage(name, reference, digest)
+		var manifest models.OCIManifest
+		if err := json.Unmarshal(manifestData, &manifest); err == nil {
+			if models.DetectArtifactType(&manifest) != models.ArtifactTypeHelmChart {
+				h.scanService.ScanImage(name, reference, digest)
+			} else {
+				h.log.WithFunc().WithField("name", name).Debug("Skipping scan for Helm chart artifact")
+			}
+		}
 	}
 
 	// Security gate check before serving proxied manifest

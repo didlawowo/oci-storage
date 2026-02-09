@@ -34,8 +34,8 @@ func NewScanService(cfg *config.Config, log *utils.Logger, pathManager *utils.Pa
 	// Create scan results and decisions directories
 	scanResultsDir := filepath.Join(cfg.Storage.Path, "scan-results")
 	scanDecisionsDir := filepath.Join(cfg.Storage.Path, "scan-decisions")
-	os.MkdirAll(scanResultsDir, 0755)
-	os.MkdirAll(scanDecisionsDir, 0755)
+	_ = os.MkdirAll(scanResultsDir, 0755)
+	_ = os.MkdirAll(scanDecisionsDir, 0755)
 
 	return &ScanService{
 		config:      cfg,
@@ -120,9 +120,13 @@ func (s *ScanService) TriggerScan(name, ref, digest string) string {
 
 		// Auto-create decision
 		if status == "approved" {
-			s.SetDecision(digest, "approved", "Auto-approved: within policy thresholds", "system", 0)
+			if err := s.SetDecision(digest, "approved", "Auto-approved: within policy thresholds", "system", 0); err != nil {
+				s.log.WithFunc().WithError(err).Error("Failed to set approved decision")
+			}
 		} else {
-			s.SetDecision(digest, "pending", "Exceeds policy thresholds, awaiting review", "system", 0)
+			if err := s.SetDecision(digest, "pending", "Exceeds policy thresholds, awaiting review", "system", 0); err != nil {
+				s.log.WithFunc().WithError(err).Error("Failed to set pending decision")
+			}
 		}
 	}()
 
@@ -181,10 +185,13 @@ func (s *ScanService) ScanImage(name, ref, digest string) {
 
 		// Auto-create decision
 		if status == "approved" {
-			s.SetDecision(digest, "approved", "Auto-approved: within policy thresholds", "system", 0)
+			if err := s.SetDecision(digest, "approved", "Auto-approved: within policy thresholds", "system", 0); err != nil {
+				s.log.WithFunc().WithError(err).Error("Failed to set approved decision")
+			}
 		} else {
-			// Create pending decision
-			s.SetDecision(digest, "pending", "Exceeds policy thresholds, awaiting review", "system", 0)
+			if err := s.SetDecision(digest, "pending", "Exceeds policy thresholds, awaiting review", "system", 0); err != nil {
+				s.log.WithFunc().WithError(err).Error("Failed to set pending decision")
+			}
 		}
 	}()
 }

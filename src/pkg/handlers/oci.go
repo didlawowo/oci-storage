@@ -755,10 +755,12 @@ func (h *OCIHandler) PutManifest(c *fiber.Ctx) error {
 	}).Info("Manifest saved successfully")
 
 	// Trigger async vulnerability scan if enabled
-	// Only scan when the reference is a proper tag (not a digest or upload path)
+	// Only scan Docker images (not Helm charts), and only for proper tags
 	if h.scanService != nil && h.scanService.IsEnabled() &&
 		!strings.HasPrefix(reference, "sha256:") && !strings.Contains(reference, "/") {
-		h.scanService.ScanImage(name, reference, digestStr)
+		if models.DetectArtifactType(&manifest) != models.ArtifactTypeHelmChart {
+			h.scanService.ScanImage(name, reference, digestStr)
+		}
 	}
 
 	return c.SendStatus(201)

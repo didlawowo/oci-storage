@@ -25,6 +25,16 @@ repos:
   - id: check-shebang-scripts-are-executable
     stages: [ commit ]
 
+- repo: local
+  hooks:
+  - id: golangci-lint
+    name: golangci-lint
+    entry: bash -c 'cd src && golangci-lint run --new-from-rev=HEAD~1 ./...'
+    language: system
+    types: [go]
+    pass_filenames: false
+    stages: [ commit ]
+
 - repo: https://github.com/compilerla/conventional-pre-commit
   rev: v4.0.0
   hooks:
