@@ -242,36 +242,10 @@ func (h *OCIHandler) proxyManifest(c *fiber.Ctx, name, reference string) error {
 	return c.Send(manifestData)
 }
 
-// normalizeImageName normalizes Docker Hub image names to include library/ prefix
-// This ensures proxy/docker.io/nginx and proxy/docker.io/library/nginx are stored the same
-// Example: proxy/docker.io/traefik -> proxy/docker.io/library/traefik
-func (h *OCIHandler) normalizeImageName(name string) string {
-	// Check if this is a Docker Hub image
-	if !strings.Contains(name, "docker.io/") {
-		return name
-	}
-
-	// Split by docker.io/
-	parts := strings.SplitN(name, "docker.io/", 2)
-	if len(parts) != 2 {
-		return name
-	}
-
-	prefix := parts[0] + "docker.io/"
-	imagePart := parts[1]
-
-	// If image doesn't contain "/" it's an official image, add library/
-	if !strings.Contains(imagePart, "/") {
-		return prefix + "library/" + imagePart
-	}
-
-	return name
-}
-
 // cacheManifest saves a proxied manifest to local storage
 func (h *OCIHandler) cacheManifest(name, reference string, manifestData []byte, registryURL, upstreamName string) {
 	// Normalize name to avoid duplicates (traefik vs library/traefik)
-	name = h.normalizeImageName(name)
+	name = normalizeDockerHubName(name)
 	var manifest models.OCIManifest
 	var totalSize int64
 

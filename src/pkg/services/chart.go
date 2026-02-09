@@ -158,8 +158,6 @@ func (s *ChartService) ListCharts() ([]models.ChartGroup, error) {
 		}
 
 		chartMetadatas = append(chartMetadatas, *metadata)
-		// trier les charts par nom et version TODO
-
 	}
 
 	// Utiliser GroupChartsByName pour grouper les charts

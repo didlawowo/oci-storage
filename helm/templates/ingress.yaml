@@ -5,10 +5,10 @@ metadata:
   namespace: {{ $.Release.Namespace | quote }}
   labels:
     app: {{ $.Release.Name | quote }}
-  {{- with .Values.ingress.annotations }}
   annotations:
+    {{- with .Values.ingress.annotations }}
     {{- toYaml . | nindent 4 }}
-  {{- end }}
+    {{- end }}
 spec:
   ingressClassName: {{ $.Values.ingress.ingressClassName }}
   rules:
