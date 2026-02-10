@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.0](https://github.com/didlawowo/oci-storage/compare/v1.2.0...v1.3.0) (2026-02-10)
+
+
+### Features
+
+* plusieurs améliorations de code ([#32](https://github.com/didlawowo/oci-storage/issues/32)) ([0d6c63d](https://github.com/didlawowo/oci-storage/commit/0d6c63d0a08e9706761a216fee6f6cb0f996e500))
+
 ## [1.2.0](https://github.com/didlawowo/oci-storage/compare/v1.1.0...v1.2.0) (2026-02-08)
 
 
