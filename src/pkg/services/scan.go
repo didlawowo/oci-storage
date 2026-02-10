@@ -110,7 +110,7 @@ func (s *ScanService) TriggerScan(name, ref, digest string) string {
 		}
 
 		// Evaluate policy and create decision
-		status := s.EvaluatePolicy(result)
+		status := s.evaluatePolicy(result)
 		s.log.WithFunc().WithFields(logrus.Fields{
 			"digest":   digest,
 			"status":   status,
@@ -175,7 +175,7 @@ func (s *ScanService) ScanImage(name, ref, digest string) {
 		}
 
 		// Evaluate policy and create decision
-		status := s.EvaluatePolicy(result)
+		status := s.evaluatePolicy(result)
 		s.log.WithFunc().WithFields(logrus.Fields{
 			"digest":   digest,
 			"status":   status,
@@ -356,9 +356,9 @@ func (s *ScanService) executeScan(name, ref, digest string) (*models.ScanResult,
 	return result, nil
 }
 
-// EvaluatePolicy checks scan results against configured policy thresholds
+// evaluatePolicy checks scan results against configured policy thresholds
 // A threshold of 0 means disabled (no limit), except for MaxCritical where 0 means none tolerated
-func (s *ScanService) EvaluatePolicy(result *models.ScanResult) string {
+func (s *ScanService) evaluatePolicy(result *models.ScanResult) string {
 	policy := s.config.Trivy.Policy
 
 	// Check exempt images

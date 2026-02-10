@@ -9,7 +9,7 @@ ingress:
   host: oci-storage.dc-tech.work
   tls:
     enabled: true
-    secretName: "wildcard-dc"
+    secretName: "wildcard-dc-tls"
   ingressClassName: traefik
 
 env:

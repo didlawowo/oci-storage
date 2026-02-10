@@ -82,7 +82,7 @@ func (h *OCIHandler) GetBlob(c *fiber.Ctx) error {
 	}
 
 	// Normalize Docker Hub names for consistent cache lookup
-	normalizedName := h.normalizeImageName(name)
+	normalizedName := normalizeDockerHubName(name)
 
 	h.log.WithFunc().WithFields(logrus.Fields{
 		"name":           name,
@@ -199,7 +199,7 @@ func (h *OCIHandler) HandleManifest(c *fiber.Ctx) error {
 	}
 
 	// Normalize Docker Hub names for cache lookup (traefik -> library/traefik)
-	normalizedName := h.normalizeImageName(name)
+	normalizedName := normalizeDockerHubName(name)
 
 	h.log.WithFunc().WithFields(logrus.Fields{
 		"name":           name,
