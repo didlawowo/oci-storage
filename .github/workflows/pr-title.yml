@@ -1,0 +1,45 @@
+# =============================================================================
+# PR Title - Conventional Commits Validation
+# =============================================================================
+# Ensures PR titles follow Conventional Commits format for Release Please
+# See: https://www.conventionalcommits.org/
+# =============================================================================
+
+name: "PR Title Check"
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+    branches: [main]
+
+permissions:
+  pull-requests: read
+
+jobs:
+  validate:
+    name: "Validate PR Title"
+    runs-on: arc-runner-oci-storage
+    steps:
+      - uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # Types allowed in PR titles (aligned with Release Please)
+          types: |
+            feat
+            fix
+            chore
+            ci
+            docs
+            refactor
+            perf
+            test
+            build
+            revert
+          # Require a scope in parentheses
+          requireScope: false
+          # Disallow UPPERCASE in subject
+          subjectPattern: ^(?![A-Z]).+$
+          subjectPatternError: |
+            Le sujet "{subject}" ne doit pas commencer par une majuscule.
+            Exemple valide: "feat(auth): ajouter la validation JWT"
