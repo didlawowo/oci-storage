@@ -6,6 +6,7 @@ import (
 	"oci-storage/pkg/interfaces"
 	utils "oci-storage/pkg/utils"
 	"oci-storage/pkg/version"
+	"os"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
@@ -82,7 +83,16 @@ func (h *HelmHandler) GetChartVersions(c *fiber.Ctx) error {
 func (h *IndexHandler) GetIndex(c *fiber.Ctx) error {
 	indexPath := h.pathManager.GetIndexPath()
 	h.log.WithFunc().WithField("path", indexPath).Debug("Processing index.yaml request")
-	return c.SendFile(indexPath)
+
+	// Read file directly instead of SendFile to avoid fasthttp file caching
+	// which can serve stale index.yaml after chart upload/delete
+	data, err := os.ReadFile(indexPath)
+	if err != nil {
+		h.log.WithFunc().WithError(err).Error("Failed to read index.yaml")
+		return HTTPError(c, 500, "Failed to read index")
+	}
+	c.Set("Content-Type", "text/yaml; charset=utf-8")
+	return c.Send(data)
 }
 
 func (h *HelmHandler) GetChart(c *fiber.Ctx) error {
