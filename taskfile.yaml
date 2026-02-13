@@ -58,3 +58,38 @@ tasks:
     desc: Create Kubernetes backup secret (AWS)
     cmds:
     - kubectl create secret generic oci-storage-backup --from-literal=BACKUP_ENABLED="true" --from-literal=BACKUP_PROVIDER="aws" --from-literal=AWS_BUCKET="oci-storage-backup" --from-literal=AWS_REGION="eu-west-1" --from-literal=AWS_ACCESS_KEY_ID="YOUR_ACCESS_KEY" --from-literal=AWS_SECRET_ACCESS_KEY="YOUR_SECRET_KEY" --namespace=kube-infra --dry-run=client -o yaml | kubectl apply -f -
+
+  publish:
+    desc: Build, tag, push image and update helm chart (bumps patch version from latest git tag)
+    vars:
+      LATEST_TAG:
+        sh: git tag --sort=-v:refname | head -1 | sed 's/^v//'
+      MAJOR:
+        sh: git tag --sort=-v:refname | head -1 | sed 's/^v//' | cut -d. -f1
+      MINOR:
+        sh: git tag --sort=-v:refname | head -1 | sed 's/^v//' | cut -d. -f2
+      PATCH:
+        sh: git tag --sort=-v:refname | head -1 | sed 's/^v//' | cut -d. -f3
+      NEW_PATCH:
+        sh: echo $(($(git tag --sort=-v:refname | head -1 | sed 's/^v//' | cut -d. -f3) + 1))
+      NEW_VERSION:
+        sh: echo "$(git tag --sort=-v:refname | head -1 | sed 's/^v//' | cut -d. -f1).$(git tag --sort=-v:refname | head -1 | sed 's/^v//' | cut -d. -f2).$(($(git tag --sort=-v:refname | head -1 | sed 's/^v//' | cut -d. -f3) + 1))"
+      COMMIT_SHA:
+        sh: git rev-parse --short HEAD
+    cmds:
+      - echo "Current version {{.LATEST_TAG}} → New version {{.NEW_VERSION}}"
+      - docker buildx build --platform linux/amd64
+          --build-arg VERSION={{.NEW_VERSION}}
+          --build-arg COMMIT={{.COMMIT_SHA}}
+          --build-arg BUILD_TIME={{now | date "2006-01-02T15:04:05Z"}}
+          -t fizzbuzz2/oci-storage:v{{.NEW_VERSION}}
+          --push .
+      - 'sed -i "" "s/^version: .*/version: {{.NEW_VERSION}}/" helm/Chart.yaml'
+      - 'sed -i "" "s/^appVersion: .*/appVersion: \"{{.NEW_VERSION}}\"/" helm/Chart.yaml'
+      - 'sed -i "" "s/tag: .*/tag: \"v{{.NEW_VERSION}}\"/" helm/values.yaml'
+      - git add helm/Chart.yaml helm/values.yaml
+      - git commit -m "chore{{":"}} release v{{.NEW_VERSION}}"
+      - git tag v{{.NEW_VERSION}}
+      - git push origin main --force --no-verify
+      - git push origin v{{.NEW_VERSION}} --no-verify
+      - echo "Published v{{.NEW_VERSION}} ✓"
