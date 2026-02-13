@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -435,7 +436,33 @@ func generateUUID() string {
 }
 
 func (h *OCIHandler) PutBlob(c *fiber.Ctx) error {
-	digest := calculateDigest(c.Body())
+	// Stream body to a temp file while computing digest simultaneously
+	tempUUID := generateUUID()
+	tempDir := filepath.Dir(h.pathManager.GetTempPath(tempUUID))
+	if err := os.MkdirAll(tempDir, 0755); err != nil {
+		h.log.WithFunc().WithError(err).Error("Failed to create temp directory")
+		return c.SendStatus(500)
+	}
+
+	tmpFile, err := os.CreateTemp(tempDir, "blob-upload-*")
+	if err != nil {
+		h.log.WithFunc().WithError(err).Error("Failed to create temp file")
+		return c.SendStatus(500)
+	}
+	tmpPath := tmpFile.Name()
+	defer os.Remove(tmpPath) // Clean up temp file on any error path
+
+	hasher := sha256.New()
+	writer := io.MultiWriter(tmpFile, hasher)
+
+	if _, err := io.Copy(writer, c.Request().BodyStream()); err != nil {
+		tmpFile.Close()
+		h.log.WithFunc().WithError(err).Error("Failed to stream blob upload")
+		return c.SendStatus(500)
+	}
+	tmpFile.Close()
+
+	digest := fmt.Sprintf("sha256:%x", hasher.Sum(nil))
 	blobPath := h.pathManager.GetBlobPath(digest)
 
 	h.log.WithFunc().WithFields(logrus.Fields{
@@ -445,12 +472,12 @@ func (h *OCIHandler) PutBlob(c *fiber.Ctx) error {
 
 	if err := os.MkdirAll(filepath.Dir(blobPath), 0755); err != nil {
 		h.log.WithFunc().WithError(err).Error("Failed to create blob directory")
-		return err
+		return c.SendStatus(500)
 	}
 
-	if err := os.WriteFile(blobPath, c.Body(), 0644); err != nil {
-		h.log.WithFunc().WithError(err).Error("Failed to write blob")
-		return err
+	if err := os.Rename(tmpPath, blobPath); err != nil {
+		h.log.WithFunc().WithError(err).Error("Failed to move blob to final path")
+		return c.SendStatus(500)
 	}
 
 	c.Set("Docker-Content-Digest", digest)
@@ -491,7 +518,6 @@ func (h *OCIHandler) PatchBlob(c *fiber.Ctx) error {
 
 	h.log.WithFunc().WithFields(logrus.Fields{
 		"uuid": uuid,
-		"size": len(c.Body()),
 		"path": tempPath,
 	}).Debug("Processing PATCH request")
 
@@ -500,17 +526,27 @@ func (h *OCIHandler) PatchBlob(c *fiber.Ctx) error {
 		return c.SendStatus(500)
 	}
 
-	if len(c.Body()) == 0 {
-		h.log.WithFunc().Error("Received empty body")
-		return HTTPError(c, 400, "Empty body")
+	// Stream body to disk to handle large blobs without loading into memory
+	file, err := os.Create(tempPath)
+	if err != nil {
+		h.log.WithFunc().WithError(err).Error("Failed to create temp file")
+		return c.SendStatus(500)
 	}
+	defer file.Close()
 
-	if err := os.WriteFile(tempPath, c.Body(), 0644); err != nil {
-		h.log.WithFunc().WithError(err).Error("Failed to write temp file")
+	written, err := io.Copy(file, c.Request().BodyStream())
+	if err != nil {
+		h.log.WithFunc().WithError(err).Error("Failed to stream body to temp file")
 		return c.SendStatus(500)
 	}
 
-	h.log.WithFunc().Info("Successfully processed PATCH data")
+	if written == 0 {
+		h.log.WithFunc().Error("Received empty body")
+		os.Remove(tempPath)
+		return HTTPError(c, 400, "Empty body")
+	}
+
+	h.log.WithFunc().WithField("bytes", written).Info("Successfully processed PATCH data")
 
 	// Build absolute URL for Location header (required by OCI clients like crane)
 	scheme := "http"
@@ -520,7 +556,7 @@ func (h *OCIHandler) PatchBlob(c *fiber.Ctx) error {
 	location := fmt.Sprintf("%s://%s/v2/%s/blobs/uploads/%s", scheme, c.Hostname(), name, uuid)
 	c.Set("Location", location)
 	c.Set("Docker-Upload-UUID", uuid)
-	c.Set("Range", fmt.Sprintf("0-%d", len(c.Body())-1))
+	c.Set("Range", fmt.Sprintf("0-%d", written-1))
 	return c.SendStatus(202)
 }
 
@@ -554,10 +590,22 @@ func (h *OCIHandler) CompleteUpload(c *fiber.Ctx) error {
 		"finalPath": finalPath,
 	}).Debug("Completing upload")
 
-	if len(c.Body()) > 0 {
-		if err := os.WriteFile(tempPath, c.Body(), 0644); err != nil {
-			h.log.WithFunc().WithError(err).Error("Failed to write final data")
+	// Stream any remaining body data to the temp file
+	bodyStream := c.Request().BodyStream()
+	if bodyStream != nil {
+		file, err := os.OpenFile(tempPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
+		if err != nil {
+			h.log.WithFunc().WithError(err).Error("Failed to open temp file for final data")
 			return c.SendStatus(500)
+		}
+		written, err := io.Copy(file, bodyStream)
+		file.Close()
+		if err != nil {
+			h.log.WithFunc().WithError(err).Error("Failed to stream final data")
+			return c.SendStatus(500)
+		}
+		if written > 0 {
+			h.log.WithFunc().WithField("bytes", written).Debug("Wrote final chunk data")
 		}
 	}
 

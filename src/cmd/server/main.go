@@ -157,7 +157,8 @@ func main() {
 		CaseSensitive: true,
 		StrictRouting: true,
 		ServerHeader:  "oci storage",
-		BodyLimit:     1024 * 1024 * 1024, // 1GB for large Docker image layers
+		BodyLimit:          10 * 1024 * 1024 * 1024, // 10GB for large Docker image layers (ML models, etc.)
+		StreamRequestBody: true,                     // Enable streaming for large uploads
 		Views:         html.New("./views", ".html"),
 
 		ErrorHandler: func(c *fiber.Ctx, err error) error {
