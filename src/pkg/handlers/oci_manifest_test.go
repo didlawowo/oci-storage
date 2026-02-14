@@ -340,3 +340,119 @@ func TestManifestDigestIntegrity(t *testing.T) {
 			desc.Digest, actualChildDigest)
 	}
 }
+
+// TestPutManifest_RejectsSizeMismatch verifies that PutManifest rejects a manifest
+// when its declared layer sizes don't match the actual blobs on disk.
+// This prevents the "failed size validation: X != Y" error during pull.
+func TestPutManifest_RejectsSizeMismatch(t *testing.T) {
+	app, _, mockImageService, handler, tempDir, cleanup := setupManifestTestEnv(t)
+	defer cleanup()
+
+	app.Put("/v2/:name/manifests/:reference", handler.PutManifest)
+
+	// Step 1: Create a real blob on disk (simulating a prior push)
+	blobContent := []byte("this is a fake layer blob with some content for testing")
+	blobDigest := fmt.Sprintf("sha256:%x", sha256.Sum256(blobContent))
+	blobPath := filepath.Join(tempDir, "blobs", blobDigest)
+	err := os.MkdirAll(filepath.Dir(blobPath), 0755)
+	assert.NoError(t, err)
+	err = os.WriteFile(blobPath, blobContent, 0644)
+	assert.NoError(t, err)
+
+	actualSize := int64(len(blobContent))
+	wrongSize := actualSize + 999 // deliberately wrong
+
+	// Step 2: Create a manifest that declares wrong size for the layer
+	manifest := fmt.Sprintf(`{
+  "schemaVersion": 2,
+  "mediaType": "application/vnd.oci.image.manifest.v1+json",
+  "config": {
+    "mediaType": "application/vnd.oci.image.config.v1+json",
+    "digest": "sha256:configdigest000",
+    "size": 0
+  },
+  "layers": [
+    {
+      "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+      "digest": "%s",
+      "size": %d
+    }
+  ]
+}`, blobDigest, wrongSize)
+
+	// Step 3: Push manifest - should be rejected with 400
+	req := httptest.NewRequest("PUT", "/v2/testimage/manifests/v1.0.0", bytes.NewReader([]byte(manifest)))
+	req.Header.Set("Content-Type", "application/vnd.oci.image.manifest.v1+json")
+	resp, err := app.Test(req)
+
+	assert.NoError(t, err)
+	assert.Equal(t, 400, resp.StatusCode, "Manifest with wrong layer size should be rejected")
+
+	// Verify the error message mentions size mismatch
+	body, _ := io.ReadAll(resp.Body)
+	assert.Contains(t, string(body), "BLOB_SIZE_MISMATCH")
+
+	// Step 4: Now push with correct size - should succeed
+	_ = mockImageService // will be called on success path
+	correctManifest := fmt.Sprintf(`{
+  "schemaVersion": 2,
+  "mediaType": "application/vnd.oci.image.manifest.v1+json",
+  "config": {
+    "mediaType": "application/vnd.oci.image.config.v1+json",
+    "digest": "sha256:configdigest000",
+    "size": 0
+  },
+  "layers": [
+    {
+      "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+      "digest": "%s",
+      "size": %d
+    }
+  ]
+}`, blobDigest, actualSize)
+
+	mockImageService.On("SaveImage", "testimage", "v1.0.0", mock.AnythingOfType("*models.OCIManifest")).Return(nil)
+
+	req2 := httptest.NewRequest("PUT", "/v2/testimage/manifests/v1.0.0", bytes.NewReader([]byte(correctManifest)))
+	req2.Header.Set("Content-Type", "application/vnd.oci.image.manifest.v1+json")
+	resp2, err := app.Test(req2)
+
+	assert.NoError(t, err)
+	assert.Equal(t, 201, resp2.StatusCode, "Manifest with correct layer size should be accepted")
+}
+
+// TestPutManifest_AllowsMissingBlobs verifies that a manifest referencing blobs
+// not yet on disk is still accepted (cross-repo mount scenario)
+func TestPutManifest_AllowsMissingBlobs(t *testing.T) {
+	app, _, mockImageService, handler, _, cleanup := setupManifestTestEnv(t)
+	defer cleanup()
+
+	app.Put("/v2/:name/manifests/:reference", handler.PutManifest)
+
+	// Manifest references a blob that doesn't exist locally
+	manifest := `{
+  "schemaVersion": 2,
+  "mediaType": "application/vnd.oci.image.manifest.v1+json",
+  "config": {
+    "mediaType": "application/vnd.oci.image.config.v1+json",
+    "digest": "sha256:nonexistentconfig",
+    "size": 1234
+  },
+  "layers": [
+    {
+      "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+      "digest": "sha256:nonexistentlayer",
+      "size": 5678
+    }
+  ]
+}`
+
+	mockImageService.On("SaveImage", "testimage", "latest", mock.AnythingOfType("*models.OCIManifest")).Return(nil)
+
+	req := httptest.NewRequest("PUT", "/v2/testimage/manifests/latest", bytes.NewReader([]byte(manifest)))
+	req.Header.Set("Content-Type", "application/vnd.oci.image.manifest.v1+json")
+	resp, err := app.Test(req)
+
+	assert.NoError(t, err)
+	assert.Equal(t, 201, resp.StatusCode, "Manifest with missing blobs should still be accepted")
+}

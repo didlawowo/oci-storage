@@ -712,6 +712,15 @@ func (h *OCIHandler) PutManifest(c *fiber.Ctx) error {
 	isManifestList := manifest.MediaType == models.MediaTypeOCIManifestList ||
 		manifest.MediaType == models.MediaTypeDockerManifestList
 
+	// Validate that declared layer/config sizes match actual blob sizes on disk
+	// This prevents size mismatches that cause pull failures (e.g. containerd's
+	// "failed size validation: X != Y" error)
+	if !isManifestList {
+		if err := h.validateManifestBlobSizes(name, &manifest); err != nil {
+			return HTTPError(c, 400, err.Error())
+		}
+	}
+
 	if isManifestList {
 		// Handle manifest list/index - preserve raw bytes, don't re-marshal
 		h.log.WithFunc().WithFields(logrus.Fields{
@@ -854,6 +863,51 @@ func (h *OCIHandler) handleHelmChartManifest(name, reference string, manifest *m
 	fileName := fmt.Sprintf("%s-%s.tgz", chartName, version)
 	if err := h.chartService.SaveChart(chartData, fileName); err != nil {
 		return fmt.Errorf("failed to save chart: %w", err)
+	}
+
+	return nil
+}
+
+// validateManifestBlobSizes checks that each layer and config blob referenced
+// in the manifest exists on disk and that the declared size matches the actual
+// file size. This prevents "failed size validation" errors during pull (e.g.
+// containerd comparing declared vs actual sizes).
+func (h *OCIHandler) validateManifestBlobSizes(name string, manifest *models.OCIManifest) error {
+	// Collect all descriptors to validate (config + layers)
+	descriptors := append([]models.OCIDescriptor{manifest.Config}, manifest.Layers...)
+
+	for _, desc := range descriptors {
+		if desc.Digest == "" {
+			continue
+		}
+
+		blobPath := h.pathManager.GetBlobPath(desc.Digest)
+		info, err := os.Stat(blobPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				h.log.WithFields(logrus.Fields{
+					"name":   name,
+					"digest": desc.Digest,
+				}).Warn("Manifest references non-existent blob")
+				// Don't reject - blob may arrive later in cross-repo mount scenarios
+				continue
+			}
+			h.log.WithError(err).WithField("digest", desc.Digest).Error("Failed to stat blob")
+			continue
+		}
+
+		if desc.Size > 0 && info.Size() != desc.Size {
+			h.log.WithFields(logrus.Fields{
+				"name":         name,
+				"digest":       desc.Digest,
+				"declaredSize": desc.Size,
+				"actualSize":   info.Size(),
+			}).Error("Manifest layer size mismatch - declared size does not match blob on disk")
+			return fmt.Errorf(
+				"BLOB_SIZE_MISMATCH: layer %s declared size %d but actual size is %d",
+				desc.Digest, desc.Size, info.Size(),
+			)
+		}
 	}
 
 	return nil
