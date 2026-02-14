@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.0](https://github.com/didlawowo/oci-storage/compare/v1.3.0...v1.4.0) (2026-02-14)
+
+
+### Features
+
+* **oci:** ajouter une validation de taille des blobs dans les manife… ([#37](https://github.com/didlawowo/oci-storage/issues/37)) ([7419ccf](https://github.com/didlawowo/oci-storage/commit/7419ccf1022581fd1ce9b24285cdd988ecbf9b9a))
+
 ## [1.3.0](https://github.com/didlawowo/oci-storage/compare/v1.2.0...v1.3.0) (2026-02-10)
 
 
