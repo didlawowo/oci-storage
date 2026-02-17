@@ -201,6 +201,9 @@ func main() {
 	})
 	// Créer le middleware d'authentification
 	authMiddleware := middleware.NewAuthMiddleware(cfg, log)
+	if !cfg.Auth.IsEnabled() {
+		log.Warn("Authentication is DISABLED - all /v2/ write operations are open")
+	}
 
 	// Appliquer le middleware aux routes OCI qui nécessitent une authentification
 	ociGroup := app.Group("/v2")

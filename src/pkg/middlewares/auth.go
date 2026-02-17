@@ -25,6 +25,11 @@ func NewAuthMiddleware(config *config.Config, log *utils.Logger) *AuthMiddleware
 
 func (m *AuthMiddleware) Authenticate() fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		// If auth is disabled via config, allow all requests through
+		if !m.config.Auth.IsEnabled() {
+			return c.Next()
+		}
+
 		// Allow anonymous read access for proxy/cache functionality
 		// Only require auth for write operations (PUT, POST, DELETE, PATCH)
 		method := c.Method()

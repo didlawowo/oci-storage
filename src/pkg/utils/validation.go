@@ -111,10 +111,11 @@ func ComputeFileDigest(path string) (string, error) {
 	return fmt.Sprintf("sha256:%x", h.Sum(nil)), nil
 }
 
-// ValidateManifestContent performs structural validation of an OCI manifest.
-// Returns error if the manifest is invalid.
+// ValidateManifestContent performs minimal structural validation of an OCI manifest.
+// Only rejects clearly malformed payloads. Does NOT restrict mediaType because the
+// OCI spec allows arbitrary artifact types (Helm, WASM, SBOM, Cosign signatures, etc.).
 func ValidateManifestContent(manifest map[string]interface{}) error {
-	// schemaVersion must be 2
+	// schemaVersion must be present and equal to 2
 	sv, ok := manifest["schemaVersion"]
 	if !ok {
 		return fmt.Errorf("MANIFEST_INVALID: missing schemaVersion field")
@@ -124,29 +125,16 @@ func ValidateManifestContent(manifest map[string]interface{}) error {
 		return fmt.Errorf("MANIFEST_INVALID: schemaVersion must be 2, got %v", sv)
 	}
 
-	// If mediaType is present, it must be a recognized type
-	if mt, ok := manifest["mediaType"]; ok {
-		mtStr, isStr := mt.(string)
-		if isStr && mtStr != "" {
-			validTypes := map[string]bool{
-				"application/vnd.docker.distribution.manifest.v2+json":      true,
-				"application/vnd.docker.distribution.manifest.list.v2+json": true,
-				"application/vnd.oci.image.manifest.v1+json":               true,
-				"application/vnd.oci.image.index.v1+json":                  true,
-			}
-			if !validTypes[mtStr] {
-				return fmt.Errorf("MANIFEST_INVALID: unrecognized mediaType: %s", mtStr)
-			}
-		}
+	// Must have either "manifests" (index) or "config" (image/artifact manifest)
+	_, hasManifests := manifest["manifests"]
+	_, hasConfig := manifest["config"]
+	if !hasManifests && !hasConfig {
+		return fmt.Errorf("MANIFEST_INVALID: must contain either 'config' or 'manifests' field")
 	}
 
-	// For non-index manifests, config must have a digest
-	if _, hasManifests := manifest["manifests"]; !hasManifests {
-		cfg, hasCfg := manifest["config"]
-		if !hasCfg {
-			return fmt.Errorf("MANIFEST_INVALID: missing config field")
-		}
-		cfgMap, ok := cfg.(map[string]interface{})
+	// For non-index manifests, config must be an object with a digest
+	if !hasManifests && hasConfig {
+		cfgMap, ok := manifest["config"].(map[string]interface{})
 		if !ok {
 			return fmt.Errorf("MANIFEST_INVALID: config must be an object")
 		}

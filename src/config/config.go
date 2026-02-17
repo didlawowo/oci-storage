@@ -16,7 +16,16 @@ type User struct {
 }
 
 type AuthConfig struct {
-	Users []User `yaml:"users"`
+	Enabled *bool  `yaml:"enabled"` // nil = true (enabled by default for backward compat)
+	Users   []User `yaml:"users"`
+}
+
+// IsEnabled returns whether auth is enabled. Defaults to true if not set.
+func (a *AuthConfig) IsEnabled() bool {
+	if a.Enabled == nil {
+		return true
+	}
+	return *a.Enabled
 }
 
 type Backup struct {
@@ -239,6 +248,9 @@ func loadConfigFromEnv(config *Config) {
 	// Load registry credentials from environment variables
 	loadRegistryCredentialsFromEnv(config)
 
+	// Load auth enabled/disabled from environment
+	loadAuthEnabledFromEnv(config)
+
 	// Load auth users from environment variables
 	loadAuthFromEnv(config)
 }
@@ -278,6 +290,14 @@ func loadRegistryCredentialsFromEnv(config *Config) {
 		if password := os.Getenv("REGISTRY_" + envName + "_PASSWORD"); password != "" {
 			reg.Password = password
 		}
+	}
+}
+
+// loadAuthEnabledFromEnv loads auth enabled/disabled setting from environment
+func loadAuthEnabledFromEnv(config *Config) {
+	if v := os.Getenv("AUTH_ENABLED"); v != "" {
+		enabled := v == "true"
+		config.Auth.Enabled = &enabled
 	}
 }
 

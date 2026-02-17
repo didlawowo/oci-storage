@@ -14,6 +14,9 @@ backup:
   #   bucket: "oci-storage-backup"
   #   region: "eu-west-1"
 
+auth:
+  enabled: true # set to false to disable auth on /v2/ (or env AUTH_ENABLED=false)
+
 logging:
   level: "debug"
   format: "text"
