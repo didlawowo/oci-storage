@@ -42,18 +42,23 @@ func setupBackend(cfg *config.Config, log *utils.Logger) storage.Backend {
 // setupCoordination creates distributed coordination primitives.
 // With Redis: distributed locks + upload tracking + scan dedup across replicas.
 // Without Redis: noop implementations (single-replica mode).
-func setupCoordination(cfg *config.Config, log *utils.Logger) (coordination.LockManager, coordination.UploadTracker, coordination.ScanTracker) {
+// Returns a cleanup function that must be deferred to close connections.
+func setupCoordination(cfg *config.Config, log *utils.Logger) (coordination.LockManager, coordination.UploadTracker, coordination.ScanTracker, func()) {
 	if cfg.Redis.Enabled {
 		client, err := ociRedis.NewClient(cfg.Redis, log)
 		if err != nil {
 			log.WithError(err).Fatal("Failed to connect to Redis (required for multi-replica mode)")
 		}
+		cleanup := func() {
+			log.Info("Closing Redis connection")
+			client.Close()
+		}
 		// Client implements LockManager, UploadTracker, and ScanTracker
-		return client, client, client
+		return client, client, client, cleanup
 	}
 
 	log.Info("Redis disabled - running in single-replica mode (no distributed coordination)")
-	return &coordination.NoopLockManager{}, &coordination.NoopUploadTracker{}, &coordination.NoopScanTracker{}
+	return &coordination.NoopLockManager{}, &coordination.NoopUploadTracker{}, &coordination.NoopScanTracker{}, func() {}
 }
 
 // setupServices initialise et configure tous les services
@@ -173,7 +178,8 @@ func main() {
 	backend := setupBackend(cfg, log)
 
 	// Distributed coordination (Redis or noop)
-	locker, uploadTracker, scanTracker := setupCoordination(cfg, log)
+	locker, uploadTracker, scanTracker, coordCleanup := setupCoordination(cfg, log)
+	defer coordCleanup()
 
 	// PathManager
 	pathManager := utils.NewPathManager(cfg.Storage.Path, log)
