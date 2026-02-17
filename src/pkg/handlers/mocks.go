@@ -4,6 +4,7 @@ package handlers
 import (
 	"context"
 	"io"
+	"net/http"
 
 	"oci-storage/pkg/models"
 	utils "oci-storage/pkg/utils"
@@ -134,6 +135,14 @@ func (m *MockProxyService) IsEnabled() bool {
 func (m *MockProxyService) PurgeAllCache() error {
 	args := m.Called()
 	return args.Error(0)
+}
+
+func (m *MockProxyService) FetchWithAuth(ctx context.Context, req *http.Request, registryURL, name string) (*http.Response, error) {
+	args := m.Called(ctx, req, registryURL, name)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*http.Response), args.Error(1)
 }
 
 // MockImageService implements ImageServiceInterface for testing

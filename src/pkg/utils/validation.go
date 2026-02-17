@@ -1,7 +1,11 @@
 package utils
 
 import (
+	"crypto/sha256"
 	"fmt"
+	"io"
+	"os"
+	"path/filepath"
 	"regexp"
 )
 
@@ -87,5 +91,107 @@ func ValidateUUID(uuid string) error {
 	if !uuidPattern.MatchString(uuid) {
 		return fmt.Errorf("invalid UUID format")
 	}
+	return nil
+}
+
+// ComputeFileDigest computes the sha256 digest of a file by streaming it
+// without loading the entire file into memory.
+func ComputeFileDigest(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", fmt.Errorf("failed to open file for digest: %w", err)
+	}
+	defer f.Close()
+
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", fmt.Errorf("failed to compute digest: %w", err)
+	}
+
+	return fmt.Sprintf("sha256:%x", h.Sum(nil)), nil
+}
+
+// ValidateManifestContent performs structural validation of an OCI manifest.
+// Returns error if the manifest is invalid.
+func ValidateManifestContent(manifest map[string]interface{}) error {
+	// schemaVersion must be 2
+	sv, ok := manifest["schemaVersion"]
+	if !ok {
+		return fmt.Errorf("MANIFEST_INVALID: missing schemaVersion field")
+	}
+	svFloat, ok := sv.(float64)
+	if !ok || svFloat != 2 {
+		return fmt.Errorf("MANIFEST_INVALID: schemaVersion must be 2, got %v", sv)
+	}
+
+	// If mediaType is present, it must be a recognized type
+	if mt, ok := manifest["mediaType"]; ok {
+		mtStr, isStr := mt.(string)
+		if isStr && mtStr != "" {
+			validTypes := map[string]bool{
+				"application/vnd.docker.distribution.manifest.v2+json":      true,
+				"application/vnd.docker.distribution.manifest.list.v2+json": true,
+				"application/vnd.oci.image.manifest.v1+json":               true,
+				"application/vnd.oci.image.index.v1+json":                  true,
+			}
+			if !validTypes[mtStr] {
+				return fmt.Errorf("MANIFEST_INVALID: unrecognized mediaType: %s", mtStr)
+			}
+		}
+	}
+
+	// For non-index manifests, config must have a digest
+	if _, hasManifests := manifest["manifests"]; !hasManifests {
+		cfg, hasCfg := manifest["config"]
+		if !hasCfg {
+			return fmt.Errorf("MANIFEST_INVALID: missing config field")
+		}
+		cfgMap, ok := cfg.(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("MANIFEST_INVALID: config must be an object")
+		}
+		if _, hasDigest := cfgMap["digest"]; !hasDigest {
+			return fmt.Errorf("MANIFEST_INVALID: config.digest is required")
+		}
+	}
+
+	return nil
+}
+
+// AtomicWriteFile writes data to a file atomically by writing to a temp file
+// first and then renaming. This prevents corruption from concurrent reads
+// during write, crashes, or power loss.
+func AtomicWriteFile(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("failed to create directory: %w", err)
+	}
+
+	tmp, err := os.CreateTemp(dir, ".tmp-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temp file: %w", err)
+	}
+	tmpPath := tmp.Name()
+
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("failed to write temp file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("failed to close temp file: %w", err)
+	}
+
+	if err := os.Chmod(tmpPath, perm); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("failed to set file permissions: %w", err)
+	}
+
+	if err := os.Rename(tmpPath, path); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("failed to rename temp file: %w", err)
+	}
+
 	return nil
 }

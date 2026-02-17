@@ -527,14 +527,18 @@ func (h *OCIHandler) PatchBlob(c *fiber.Ctx) error {
 	}
 
 	// Stream body to disk to handle large blobs without loading into memory
-	file, err := os.Create(tempPath)
+	// Use O_APPEND to support chunked uploads (multiple PATCH requests per upload session)
+	file, err := os.OpenFile(tempPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
 	if err != nil {
-		h.log.WithFunc().WithError(err).Error("Failed to create temp file")
+		h.log.WithFunc().WithError(err).Error("Failed to open temp file for PATCH")
 		return c.SendStatus(500)
 	}
-	defer file.Close()
+
+	// Track current offset before writing (for Range response header)
+	startOffset, _ := file.Seek(0, io.SeekEnd)
 
 	written, err := io.Copy(file, c.Request().BodyStream())
+	file.Close()
 	if err != nil {
 		h.log.WithFunc().WithError(err).Error("Failed to stream body to temp file")
 		return c.SendStatus(500)
@@ -542,11 +546,13 @@ func (h *OCIHandler) PatchBlob(c *fiber.Ctx) error {
 
 	if written == 0 {
 		h.log.WithFunc().Error("Received empty body")
-		os.Remove(tempPath)
 		return HTTPError(c, 400, "Empty body")
 	}
 
-	h.log.WithFunc().WithField("bytes", written).Info("Successfully processed PATCH data")
+	h.log.WithFunc().WithFields(logrus.Fields{
+		"bytes":       written,
+		"startOffset": startOffset,
+	}).Info("Successfully processed PATCH data")
 
 	// Build absolute URL for Location header (required by OCI clients like crane)
 	scheme := "http"
@@ -556,7 +562,7 @@ func (h *OCIHandler) PatchBlob(c *fiber.Ctx) error {
 	location := fmt.Sprintf("%s://%s/v2/%s/blobs/uploads/%s", scheme, c.Hostname(), name, uuid)
 	c.Set("Location", location)
 	c.Set("Docker-Upload-UUID", uuid)
-	c.Set("Range", fmt.Sprintf("0-%d", written-1))
+	c.Set("Range", fmt.Sprintf("0-%d", startOffset+written-1))
 	return c.SendStatus(202)
 }
 
@@ -609,6 +615,28 @@ func (h *OCIHandler) CompleteUpload(c *fiber.Ctx) error {
 		}
 	}
 
+	// Verify the uploaded content matches the declared digest
+	actualDigest, err := utils.ComputeFileDigest(tempPath)
+	if err != nil {
+		h.log.WithFunc().WithError(err).Error("Failed to compute digest of uploaded blob")
+		os.Remove(tempPath)
+		return c.SendStatus(500)
+	}
+	if actualDigest != digest {
+		h.log.WithFunc().WithFields(logrus.Fields{
+			"expected": digest,
+			"actual":   actualDigest,
+		}).Error("Blob digest mismatch - uploaded content does not match declared digest")
+		os.Remove(tempPath)
+		return HTTPError(c, 400, fmt.Sprintf("DIGEST_INVALID: expected %s but got %s", digest, actualDigest))
+	}
+
+	if err := os.MkdirAll(filepath.Dir(finalPath), 0755); err != nil {
+		h.log.WithFunc().WithError(err).Error("Failed to create blob directory")
+		os.Remove(tempPath)
+		return c.SendStatus(500)
+	}
+
 	if err := os.Rename(tempPath, finalPath); err != nil {
 		h.log.WithFunc().WithError(err).Error("Failed to finalize upload")
 		return c.SendStatus(500)
@@ -650,6 +678,18 @@ func (h *OCIHandler) HeadBlob(c *fiber.Ctx) error {
 	}
 
 	if os.IsNotExist(err) {
+		// Blob not found locally - check upstream proxy if enabled
+		// Container runtimes (containerd, Docker) do HEAD before GET to check
+		// blob existence. Without this, proxy images fail with "blob unknown".
+		normalizedName := normalizeDockerHubName(name)
+		isProxyPath := strings.HasPrefix(normalizedName, "proxy/")
+		if h.proxyService != nil && h.proxyService.IsEnabled() && isProxyPath {
+			h.log.WithFunc().WithFields(logrus.Fields{
+				"name":   normalizedName,
+				"digest": digest,
+			}).Debug("Blob not found locally, checking upstream via proxy HEAD")
+			return h.proxyHeadBlob(c, normalizedName, digest)
+		}
 		h.log.WithFunc().Debug("Blob not found locally")
 		return c.SendStatus(404)
 	}
@@ -686,6 +726,18 @@ func (h *OCIHandler) PutManifest(c *fiber.Ctx) error {
 	// CRITICAL: Use the raw body bytes for storage to preserve exact content
 	// Re-marshaling JSON changes field order and formatting, corrupting the digest
 	manifestData := c.Body()
+
+	// Structural validation: ensure the manifest is valid JSON with required OCI fields
+	var rawManifest map[string]interface{}
+	if err := json.Unmarshal(manifestData, &rawManifest); err != nil {
+		h.log.WithFunc().WithError(err).Error("Manifest is not valid JSON")
+		return HTTPError(c, 400, "MANIFEST_INVALID: request body is not valid JSON")
+	}
+	if err := utils.ValidateManifestContent(rawManifest); err != nil {
+		h.log.WithFunc().WithError(err).Warn("Manifest structural validation failed")
+		return HTTPError(c, 400, err.Error())
+	}
+
 	digest := sha256.Sum256(manifestData)
 	digestStr := fmt.Sprintf("sha256:%x", digest)
 
@@ -913,19 +965,12 @@ func (h *OCIHandler) validateManifestBlobSizes(name string, manifest *models.OCI
 	return nil
 }
 
-// saveManifestFile saves a manifest to the specified path
+// saveManifestFile saves a manifest to the specified path atomically
 func (h *OCIHandler) saveManifestFile(manifestPath string, data []byte) error {
-	manifestDir := filepath.Dir(manifestPath)
-	if err := os.MkdirAll(manifestDir, 0755); err != nil {
-		h.log.WithFunc().WithError(err).Error("Failed to create manifest directory")
-		return err
-	}
-
-	if err := os.WriteFile(manifestPath, data, 0644); err != nil {
+	if err := utils.AtomicWriteFile(manifestPath, data, 0644); err != nil {
 		h.log.WithFunc().WithError(err).Error("Failed to save manifest")
 		return err
 	}
-
 	return nil
 }
 

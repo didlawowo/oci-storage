@@ -36,6 +36,15 @@ type ProxyService struct {
 func NewProxyService(cfg *config.Config, log *utils.Logger) *ProxyService {
 	pm := utils.NewPathManager(cfg.Storage.Path, log)
 
+	// Configure HTTP transport with connection pooling to prevent fd exhaustion
+	// under load. Without this, the default transport creates unbounded connections.
+	transport := &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 20,
+		MaxConnsPerHost:     50,
+		IdleConnTimeout:     90 * time.Second,
+	}
+
 	svc := &ProxyService{
 		config:      cfg,
 		pathManager: pm,
@@ -43,7 +52,8 @@ func NewProxyService(cfg *config.Config, log *utils.Logger) *ProxyService {
 		httpClient: &http.Client{
 			// No global timeout - we use context timeouts per-request instead
 			// Global timeout would kill large blob downloads (5GB+ can take 10+ minutes)
-			Timeout: 0,
+			Timeout:   0,
+			Transport: transport,
 		},
 		cacheState: &models.CacheState{
 			MaxSize: int64(cfg.Proxy.Cache.MaxSizeGB) * 1024 * 1024 * 1024,
@@ -141,7 +151,7 @@ func (s *ProxyService) GetManifest(ctx context.Context, registryURL, name, refer
 		"application/vnd.oci.image.index.v1+json",
 	}, ", "))
 
-	resp, err := s.fetchWithAuth(ctx, req, registryURL, name)
+	resp, err := s.FetchWithAuth(ctx, req, registryURL, name)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to fetch manifest: %w", err)
 	}
@@ -181,7 +191,7 @@ func (s *ProxyService) GetBlob(ctx context.Context, registryURL, name, digest st
 		return nil, 0, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	resp, err := s.fetchWithAuth(ctx, req, registryURL, name)
+	resp, err := s.FetchWithAuth(ctx, req, registryURL, name)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to fetch blob: %w", err)
 	}
@@ -194,8 +204,8 @@ func (s *ProxyService) GetBlob(ctx context.Context, registryURL, name, digest st
 	return resp.Body, resp.ContentLength, nil
 }
 
-// fetchWithAuth handles Docker registry authentication flow
-func (s *ProxyService) fetchWithAuth(ctx context.Context, req *http.Request, registryURL, name string) (*http.Response, error) {
+// FetchWithAuth handles Docker registry authentication flow
+func (s *ProxyService) FetchWithAuth(ctx context.Context, req *http.Request, registryURL, name string) (*http.Response, error) {
 	s.log.WithFields(logrus.Fields{
 		"url":    req.URL.String(),
 		"method": req.Method,

@@ -401,14 +401,14 @@ func (s *ScanService) GetScanResult(digest string) (*models.ScanResult, error) {
 	return &result, nil
 }
 
-// saveScanResult writes a scan result to disk
+// saveScanResult writes a scan result to disk atomically
 func (s *ScanService) saveScanResult(result *models.ScanResult) error {
 	path := s.scanResultPath(result.Digest)
 	data, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0644)
+	return utils.AtomicWriteFile(path, data, 0644)
 }
 
 // GetDecision returns the security gate decision for a given digest
@@ -609,5 +609,5 @@ func (s *ScanService) saveDecisions(decisions []models.ScanDecision) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(s.decisionsPath(), data, 0644)
+	return utils.AtomicWriteFile(s.decisionsPath(), data, 0644)
 }

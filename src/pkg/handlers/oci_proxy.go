@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -421,4 +422,43 @@ func (h *OCIHandler) calculateManifestListSize(index models.OCIIndex, registryUR
 	}
 
 	return platformManifest.GetTotalSize()
+}
+
+// proxyHeadBlob checks if a blob exists on the upstream registry without downloading it.
+// This enables container runtimes to do HEAD checks for proxy images before pulling.
+func (h *OCIHandler) proxyHeadBlob(c *fiber.Ctx, name, digest string) error {
+	registryURL, upstreamName, err := h.proxyService.ResolveRegistry(name)
+	if err != nil {
+		h.log.WithError(err).Error("Failed to resolve registry for HEAD blob")
+		return c.SendStatus(404)
+	}
+
+	manifestTimeout := time.Duration(h.config.Proxy.Timeout.ManifestSeconds) * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), manifestTimeout)
+	defer cancel()
+
+	url := fmt.Sprintf("%s/v2/%s/blobs/%s", registryURL, upstreamName, digest)
+	req, err := http.NewRequestWithContext(ctx, "HEAD", url, nil)
+	if err != nil {
+		h.log.WithError(err).Error("Failed to create HEAD request")
+		return c.SendStatus(502)
+	}
+
+	resp, err := h.proxyService.FetchWithAuth(ctx, req, registryURL, upstreamName)
+	if err != nil {
+		h.log.WithError(err).Error("Failed to HEAD blob from upstream")
+		return c.SendStatus(502)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusOK {
+		c.Set("Docker-Content-Digest", digest)
+		c.Set("Content-Type", "application/octet-stream")
+		if cl := resp.Header.Get("Content-Length"); cl != "" {
+			c.Set("Content-Length", cl)
+		}
+		return c.SendStatus(200)
+	}
+
+	return c.SendStatus(resp.StatusCode)
 }
