@@ -32,23 +32,33 @@ func (m *AuthMiddleware) Authenticate() fiber.Handler {
 
 		// Allow anonymous read access for proxy/cache functionality
 		// Only require auth for write operations (PUT, POST, DELETE, PATCH)
+		//
+		// EXCEPTION: GET/HEAD /v2/ (the OCI version check endpoint) must always
+		// challenge authentication. This is how "docker login" works:
+		//   1. Docker sends GET /v2/ without credentials
+		//   2. Registry replies 401 + WWW-Authenticate header
+		//   3. Docker re-sends GET /v2/ with Basic auth credentials
+		//   4. Registry validates and replies 200
+		// Without this, Docker never sends credentials and always reports
+		// "Login Succeeded" regardless of username/password.
 		method := c.Method()
 		if method == "GET" || method == "HEAD" {
-			// Check if auth header is provided - if so, validate it
-			auth := c.Get("Authorization")
-			if auth == "" {
-				// No auth provided, allow anonymous read
-				m.log.Debug("Anonymous read access allowed")
-				return c.Next()
+			path := c.Path()
+			isVersionCheck := path == "/v2" || path == "/v2/"
+			if !isVersionCheck {
+				auth := c.Get("Authorization")
+				if auth == "" {
+					m.log.Debug("Anonymous read access allowed")
+					return c.Next()
+				}
+				// Auth header provided on GET/HEAD, validate it below
 			}
-			// Auth provided, validate it below
 		}
 
 		// Récupérer le header d'authentification
 		auth := c.Get("Authorization")
 		if auth == "" {
 			m.log.Warn("No authorization header")
-			// Important: Ajouter le header WWW-Authenticate pour le realm
 			c.Set("WWW-Authenticate", `Basic realm="Helm Registry"`)
 			return c.Status(401).JSON(fiber.Map{
 				"errors": []fiber.Map{
@@ -68,30 +78,25 @@ func (m *AuthMiddleware) Authenticate() fiber.Handler {
 		}
 
 		// Décoder les credentials
-		credentials, err := base64.StdEncoding.DecodeString(auth[6:])
+		decoded, err := base64.StdEncoding.DecodeString(auth[6:])
 		if err != nil {
 			m.log.WithError(err).Warn("Failed to decode credentials")
 			return c.Status(401).SendString("Invalid credentials format")
 		}
 
-		parts := strings.Split(string(credentials), ":")
-		if len(parts) != 2 {
+		// Use SplitN with limit 2 so passwords containing ":" are handled correctly
+		parts := strings.SplitN(string(decoded), ":", 2)
+		if len(parts) != 2 || parts[0] == "" {
 			m.log.Warn("Invalid credentials format")
 			return c.Status(401).SendString("Invalid credentials format")
 		}
 
 		username, password := parts[0], parts[1]
 
-		// Debug: Log le nombre d'utilisateurs configurés
 		m.log.WithField("total_users", len(m.config.Auth.Users)).Debug("Checking authentication")
 
 		// Vérifier les credentials
 		for _, user := range m.config.Auth.Users {
-			m.log.WithFields(map[string]interface{}{
-				"config_user": user.Username,
-				"input_user":  username,
-			}).Debug("Comparing user")
-
 			if user.Username == username && user.Password == password {
 				m.log.WithField("username", username).Info("User authenticated successfully")
 				return c.Next()

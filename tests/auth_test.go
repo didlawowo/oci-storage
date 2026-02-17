@@ -132,13 +132,6 @@ func TestAuthMiddleware_InvalidCredentials(t *testing.T) {
 			expectedError:  "invalid username or password",
 		},
 		{
-			name:           "Empty username",
-			username:       "",
-			password:       "password",
-			expectedStatus: 401,
-			expectedError:  "invalid username or password",
-		},
-		{
 			name:           "Empty password",
 			username:       "admin",
 			password:       "",
@@ -179,21 +172,30 @@ func TestAuthMiddleware_InvalidCredentials(t *testing.T) {
 	}
 }
 
-func TestAuthMiddleware_MissingAuthHeader(t *testing.T) {
+func TestAuthMiddleware_AnonymousReadAllowed(t *testing.T) {
 	app, authMiddleware := setupAuthTest()
 
-	// Route protégée de test
+	// GET on a non-/v2/ path without auth should be allowed (anonymous read)
 	app.Get("/protected", authMiddleware.Authenticate(), func(c *fiber.Ctx) error {
 		return c.SendString("success")
 	})
 
-	// Créer la requête sans header d'authentification
 	req := httptest.NewRequest("GET", "/protected", nil)
-
-	// Exécuter la requête
 	resp, err := app.Test(req)
+	require.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode, "anonymous GET on non-/v2/ path should be allowed")
+}
 
-	// Vérifications
+func TestAuthMiddleware_WriteRequiresAuth(t *testing.T) {
+	app, authMiddleware := setupAuthTest()
+
+	// PUT without auth should be rejected
+	app.Put("/protected", authMiddleware.Authenticate(), func(c *fiber.Ctx) error {
+		return c.SendString("success")
+	})
+
+	req := httptest.NewRequest("PUT", "/protected", nil)
+	resp, err := app.Test(req)
 	require.NoError(t, err)
 	assert.Equal(t, 401, resp.StatusCode)
 
@@ -206,7 +208,39 @@ func TestAuthMiddleware_MissingAuthHeader(t *testing.T) {
 	err = json.NewDecoder(resp.Body).Decode(&errorResponse)
 	require.NoError(t, err)
 
-	// Vérifier la présence du champ errors
+	errors, exists := errorResponse["errors"]
+	assert.True(t, exists)
+
+	errorsList := errors.([]interface{})
+	assert.Len(t, errorsList, 1)
+
+	firstError := errorsList[0].(map[string]interface{})
+	assert.Equal(t, "UNAUTHORIZED", firstError["code"])
+	assert.Equal(t, "authentication required", firstError["message"])
+}
+
+func TestAuthMiddleware_VersionCheckRequiresAuth(t *testing.T) {
+	app, authMiddleware := setupAuthTest()
+
+	// GET /v2/ without auth must return 401 (docker login flow)
+	v2 := app.Group("/v2")
+	v2.Use(authMiddleware.Authenticate())
+	v2.Get("/", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{"apiVersion": "2.0"})
+	})
+
+	req := httptest.NewRequest("GET", "/v2/", nil)
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	assert.Equal(t, 401, resp.StatusCode, "GET /v2/ without auth must challenge")
+
+	wwwAuth := resp.Header.Get("WWW-Authenticate")
+	assert.Equal(t, `Basic realm="Helm Registry"`, wwwAuth)
+
+	var errorResponse map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&errorResponse)
+	require.NoError(t, err)
+
 	errors, exists := errorResponse["errors"]
 	assert.True(t, exists)
 
@@ -244,8 +278,14 @@ func TestAuthMiddleware_InvalidAuthFormat(t *testing.T) {
 			authHeader: "Basic " + base64.StdEncoding.EncodeToString([]byte("admin")),
 		},
 		{
-			name:       "Multiple colons",
+			name:       "Multiple colons treated as password with colons",
 			authHeader: "Basic " + base64.StdEncoding.EncodeToString([]byte("admin:pass:extra")),
+			// SplitN("admin:pass:extra", ":", 2) => ["admin", "pass:extra"]
+			// No user has password "pass:extra" so still returns 401
+		},
+		{
+			name:       "Empty username with colon",
+			authHeader: "Basic " + base64.StdEncoding.EncodeToString([]byte(":password")),
 		},
 		{
 			name:       "Empty credentials",
