@@ -125,3 +125,41 @@ func (c *Client) Remove(ctx context.Context, uuid string) error {
 	key := "oci:upload:" + uuid
 	return c.rdb.Del(ctx, key).Err()
 }
+
+// --- ScanTracker implementation ---
+
+// ClaimScan attempts to claim ownership of scanning a digest using SET NX.
+// Returns true if this pod got the claim and should proceed with the scan.
+// The TTL ensures the claim expires if the pod crashes mid-scan.
+func (c *Client) ClaimScan(ctx context.Context, digest string, ttl time.Duration) bool {
+	key := "oci:scan:" + digest
+	ok, err := c.rdb.SetNX(ctx, key, c.podID, ttl).Result()
+	if err != nil {
+		c.log.WithError(err).Warn("Redis error claiming scan, allowing scan to proceed")
+		return true // fail open
+	}
+	return ok
+}
+
+// ReleaseScan releases the scan claim after completion (only if we own it).
+func (c *Client) ReleaseScan(ctx context.Context, digest string) {
+	key := "oci:scan:" + digest
+	const luaRelease = `
+		if redis.call("GET", KEYS[1]) == ARGV[1] then
+			return redis.call("DEL", KEYS[1])
+		end
+		return 0
+	`
+	c.rdb.Eval(ctx, luaRelease, []string{key}, c.podID)
+}
+
+// IsScanRunning returns true if any pod is currently scanning this digest.
+func (c *Client) IsScanRunning(ctx context.Context, digest string) bool {
+	key := "oci:scan:" + digest
+	exists, err := c.rdb.Exists(ctx, key).Result()
+	if err != nil {
+		c.log.WithError(err).Warn("Redis error checking scan status")
+		return false
+	}
+	return exists > 0
+}

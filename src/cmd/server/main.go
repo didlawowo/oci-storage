@@ -40,24 +40,24 @@ func setupBackend(cfg *config.Config, log *utils.Logger) storage.Backend {
 }
 
 // setupCoordination creates distributed coordination primitives.
-// With Redis: distributed locks + upload tracking across replicas.
+// With Redis: distributed locks + upload tracking + scan dedup across replicas.
 // Without Redis: noop implementations (single-replica mode).
-func setupCoordination(cfg *config.Config, log *utils.Logger) (coordination.LockManager, coordination.UploadTracker) {
+func setupCoordination(cfg *config.Config, log *utils.Logger) (coordination.LockManager, coordination.UploadTracker, coordination.ScanTracker) {
 	if cfg.Redis.Enabled {
 		client, err := ociRedis.NewClient(cfg.Redis, log)
 		if err != nil {
 			log.WithError(err).Fatal("Failed to connect to Redis (required for multi-replica mode)")
 		}
-		// Client implements both LockManager and UploadTracker
-		return client, client
+		// Client implements LockManager, UploadTracker, and ScanTracker
+		return client, client, client
 	}
 
 	log.Info("Redis disabled - running in single-replica mode (no distributed coordination)")
-	return &coordination.NoopLockManager{}, &coordination.NoopUploadTracker{}
+	return &coordination.NoopLockManager{}, &coordination.NoopUploadTracker{}, &coordination.NoopScanTracker{}
 }
 
 // setupServices initialise et configure tous les services
-func setupServices(cfg *config.Config, log *utils.Logger, pm *utils.PathManager, backend storage.Backend, locker coordination.LockManager) (interfaces.ChartServiceInterface, interfaces.ImageServiceInterface, interfaces.IndexServiceInterface, interfaces.ProxyServiceInterface, *service.BackupService, interfaces.ScanServiceInterface) {
+func setupServices(cfg *config.Config, log *utils.Logger, pm *utils.PathManager, backend storage.Backend, locker coordination.LockManager, scanTracker coordination.ScanTracker) (interfaces.ChartServiceInterface, interfaces.ImageServiceInterface, interfaces.IndexServiceInterface, interfaces.ProxyServiceInterface, *service.BackupService, interfaces.ScanServiceInterface) {
 
 	tmpChartService := service.NewChartService(cfg, log, pm, backend, nil)
 	indexService := service.NewIndexService(cfg, log, pm, backend, tmpChartService, locker)
@@ -78,7 +78,7 @@ func setupServices(cfg *config.Config, log *utils.Logger, pm *utils.PathManager,
 	// Initialize scan service if enabled
 	var scanService interfaces.ScanServiceInterface
 	if cfg.Trivy.Enabled {
-		scanService = service.NewScanService(cfg, log, pm, backend, locker)
+		scanService = service.NewScanService(cfg, log, pm, backend, locker, scanTracker)
 		log.Info("Trivy scan service enabled")
 	}
 
@@ -173,13 +173,13 @@ func main() {
 	backend := setupBackend(cfg, log)
 
 	// Distributed coordination (Redis or noop)
-	locker, uploadTracker := setupCoordination(cfg, log)
+	locker, uploadTracker, scanTracker := setupCoordination(cfg, log)
 
 	// PathManager
 	pathManager := utils.NewPathManager(cfg.Storage.Path, log)
 
 	// Services
-	chartService, imageService, indexService, proxyService, backupService, scanService := setupServices(cfg, log, pathManager, backend, locker)
+	chartService, imageService, indexService, proxyService, backupService, scanService := setupServices(cfg, log, pathManager, backend, locker, scanTracker)
 
 	// Ensure index.yaml exists at startup
 	if err := indexService.EnsureIndexExists(); err != nil {

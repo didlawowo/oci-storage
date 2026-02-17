@@ -29,6 +29,19 @@ type UploadTracker interface {
 	Remove(ctx context.Context, uuid string) error
 }
 
+// ScanTracker deduplicates vulnerability scans across replicas.
+// Ensures only one pod scans a given digest at a time.
+type ScanTracker interface {
+	// ClaimScan attempts to claim ownership of scanning a digest.
+	// Returns true if this pod got the claim (should proceed with scan).
+	// Returns false if another pod is already scanning it.
+	ClaimScan(ctx context.Context, digest string, ttl time.Duration) bool
+	// ReleaseScan releases the scan claim after completion.
+	ReleaseScan(ctx context.Context, digest string)
+	// IsScanRunning returns true if any pod is currently scanning this digest.
+	IsScanRunning(ctx context.Context, digest string) bool
+}
+
 // --- Noop implementations for single-replica mode ---
 
 // NoopLockManager always succeeds immediately (no distributed coordination).
@@ -51,4 +64,17 @@ func (n *NoopUploadTracker) CheckOwnership(_ context.Context, _ string) error {
 
 func (n *NoopUploadTracker) Remove(_ context.Context, _ string) error {
 	return nil
+}
+
+// NoopScanTracker never deduplicates (single-replica falls back to local map).
+type NoopScanTracker struct{}
+
+func (n *NoopScanTracker) ClaimScan(_ context.Context, _ string, _ time.Duration) bool {
+	return true // always allow
+}
+
+func (n *NoopScanTracker) ReleaseScan(_ context.Context, _ string) {}
+
+func (n *NoopScanTracker) IsScanRunning(_ context.Context, _ string) bool {
+	return false // no cross-pod visibility
 }

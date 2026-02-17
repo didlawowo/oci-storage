@@ -28,22 +28,21 @@ type ScanService struct {
 	pathManager  *utils.PathManager
 	backend      storage.Backend
 	locker       coordination.LockManager
-	scanMutex    sync.RWMutex    // local fallback mutex (used alongside distributed lock)
-	scanSem      chan struct{}    // limits concurrent scans
-	inProgressMu sync.RWMutex    // protects inProgress map
-	inProgress   map[string]bool // tracks digests currently being scanned
+	scanTracker  coordination.ScanTracker
+	scanMutex    sync.RWMutex // local fallback mutex (used alongside distributed lock)
+	scanSem      chan struct{} // limits concurrent scans
 }
 
 // NewScanService creates a new ScanService
-func NewScanService(cfg *config.Config, log *utils.Logger, pathManager *utils.PathManager, backend storage.Backend, locker coordination.LockManager) *ScanService {
+func NewScanService(cfg *config.Config, log *utils.Logger, pathManager *utils.PathManager, backend storage.Backend, locker coordination.LockManager, scanTracker coordination.ScanTracker) *ScanService {
 	return &ScanService{
 		config:      cfg,
 		log:         log,
 		pathManager: pathManager,
 		backend:     backend,
 		locker:      locker,
+		scanTracker: scanTracker,
 		scanSem:     make(chan struct{}, 3), // max 3 concurrent scans
-		inProgress:  make(map[string]bool),
 	}
 }
 
@@ -52,24 +51,14 @@ func (s *ScanService) IsEnabled() bool {
 	return s.config.Trivy.Enabled
 }
 
-// IsScanInProgress returns whether a scan is currently running for the given digest
+// IsScanInProgress returns whether a scan is currently running for the given digest.
+// With Redis, this is visible across all replicas.
 func (s *ScanService) IsScanInProgress(digest string) bool {
-	s.inProgressMu.RLock()
-	defer s.inProgressMu.RUnlock()
-	return s.inProgress[digest]
+	return s.scanTracker.IsScanRunning(context.Background(), digest)
 }
 
-func (s *ScanService) setScanInProgress(digest string, inProgress bool) {
-	s.inProgressMu.Lock()
-	defer s.inProgressMu.Unlock()
-	if inProgress {
-		s.inProgress[digest] = true
-	} else {
-		delete(s.inProgress, digest)
-	}
-}
-
-// TriggerScan forces a vulnerability scan for the given image, ignoring TTL
+// TriggerScan forces a vulnerability scan for the given image, ignoring TTL.
+// Uses ScanTracker for cross-replica deduplication (only one pod scans a given digest).
 func (s *ScanService) TriggerScan(name, ref, digest string) string {
 	if !s.IsEnabled() {
 		return "disabled"
@@ -79,10 +68,15 @@ func (s *ScanService) TriggerScan(name, ref, digest string) string {
 		return "in_progress"
 	}
 
-	s.setScanInProgress(digest, true)
+	// Claim this scan across all replicas (SET NX in Redis, or always-true in noop mode).
+	// TTL of 10 min is a safety net in case the pod crashes mid-scan.
+	if !s.scanTracker.ClaimScan(context.Background(), digest, 10*time.Minute) {
+		s.log.WithField("digest", digest).Debug("Scan already claimed by another replica")
+		return "in_progress"
+	}
 
 	go func() {
-		defer s.setScanInProgress(digest, false)
+		defer s.scanTracker.ReleaseScan(context.Background(), digest)
 
 		s.scanSem <- struct{}{}
 		defer func() { <-s.scanSem }()
@@ -126,7 +120,8 @@ func (s *ScanService) TriggerScan(name, ref, digest string) string {
 	return "started"
 }
 
-// ScanImage triggers an async vulnerability scan for the given image
+// ScanImage triggers an async vulnerability scan for the given image.
+// Skips if a valid result exists (TTL-based) or if another replica is already scanning.
 func (s *ScanService) ScanImage(name, ref, digest string) {
 	if !s.IsEnabled() {
 		return
@@ -143,7 +138,15 @@ func (s *ScanService) ScanImage(name, ref, digest string) {
 		}
 	}
 
+	// Claim this scan across all replicas
+	if !s.scanTracker.ClaimScan(context.Background(), digest, 10*time.Minute) {
+		s.log.WithFunc().WithField("digest", digest).Debug("Scan already running on another replica, skipping")
+		return
+	}
+
 	go func() {
+		defer s.scanTracker.ReleaseScan(context.Background(), digest)
+
 		s.scanSem <- struct{}{}
 		defer func() { <-s.scanSem }()
 
