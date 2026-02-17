@@ -2,6 +2,7 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"oci-storage/config"
+	"oci-storage/pkg/coordination"
 	"oci-storage/pkg/models"
 	"oci-storage/pkg/storage"
 	"oci-storage/pkg/utils"
@@ -25,19 +27,21 @@ type ScanService struct {
 	log          *utils.Logger
 	pathManager  *utils.PathManager
 	backend      storage.Backend
-	scanMutex    sync.RWMutex
+	locker       coordination.LockManager
+	scanMutex    sync.RWMutex    // local fallback mutex (used alongside distributed lock)
 	scanSem      chan struct{}    // limits concurrent scans
 	inProgressMu sync.RWMutex    // protects inProgress map
 	inProgress   map[string]bool // tracks digests currently being scanned
 }
 
 // NewScanService creates a new ScanService
-func NewScanService(cfg *config.Config, log *utils.Logger, pathManager *utils.PathManager, backend storage.Backend) *ScanService {
+func NewScanService(cfg *config.Config, log *utils.Logger, pathManager *utils.PathManager, backend storage.Backend, locker coordination.LockManager) *ScanService {
 	return &ScanService{
 		config:      cfg,
 		log:         log,
 		pathManager: pathManager,
 		backend:     backend,
+		locker:      locker,
 		scanSem:     make(chan struct{}, 3), // max 3 concurrent scans
 		inProgress:  make(map[string]bool),
 	}
@@ -394,10 +398,20 @@ func (s *ScanService) GetDecision(digest string) (*models.ScanDecision, error) {
 	return nil, fmt.Errorf("no decision found for digest %s", digest)
 }
 
-// SetDecision sets the security gate decision for a given digest
+// SetDecision sets the security gate decision for a given digest.
+// Uses a distributed lock to prevent concurrent modifications across replicas.
 func (s *ScanService) SetDecision(digest, status, reason, decidedBy string, expiresInDays int) error {
-	s.scanMutex.Lock()
-	defer s.scanMutex.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	unlock, err := s.locker.Acquire(ctx, "scan-decisions", 10*time.Second)
+	if err != nil {
+		s.log.WithError(err).Warn("Could not acquire decision lock, using local mutex")
+		s.scanMutex.Lock()
+		defer s.scanMutex.Unlock()
+	} else {
+		defer unlock()
+	}
 
 	decisions, err := s.loadDecisions()
 	if err != nil && !os.IsNotExist(err) {
@@ -485,10 +499,20 @@ func (s *ScanService) ListAllDecisions() ([]models.ScanDecision, error) {
 	return decisions, nil
 }
 
-// DeleteDecision removes a decision, forcing re-review
+// DeleteDecision removes a decision, forcing re-review.
+// Uses a distributed lock to prevent concurrent modifications across replicas.
 func (s *ScanService) DeleteDecision(digest string) error {
-	s.scanMutex.Lock()
-	defer s.scanMutex.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	unlock, err := s.locker.Acquire(ctx, "scan-decisions", 10*time.Second)
+	if err != nil {
+		s.log.WithError(err).Warn("Could not acquire decision lock, using local mutex")
+		s.scanMutex.Lock()
+		defer s.scanMutex.Unlock()
+	} else {
+		defer unlock()
+	}
 
 	decisions, err := s.loadDecisions()
 	if err != nil {

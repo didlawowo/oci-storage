@@ -2,9 +2,11 @@ package main
 
 import (
 	"oci-storage/config"
+	"oci-storage/pkg/coordination"
 	"oci-storage/pkg/handlers"
 	"oci-storage/pkg/interfaces"
 	middleware "oci-storage/pkg/middlewares"
+	ociRedis "oci-storage/pkg/redis"
 	service "oci-storage/pkg/services"
 	"oci-storage/pkg/storage"
 	"oci-storage/pkg/utils"
@@ -37,11 +39,28 @@ func setupBackend(cfg *config.Config, log *utils.Logger) storage.Backend {
 	return storage.NewLocalBackend(cfg.Storage.Path)
 }
 
+// setupCoordination creates distributed coordination primitives.
+// With Redis: distributed locks + upload tracking across replicas.
+// Without Redis: noop implementations (single-replica mode).
+func setupCoordination(cfg *config.Config, log *utils.Logger) (coordination.LockManager, coordination.UploadTracker) {
+	if cfg.Redis.Enabled {
+		client, err := ociRedis.NewClient(cfg.Redis, log)
+		if err != nil {
+			log.WithError(err).Fatal("Failed to connect to Redis (required for multi-replica mode)")
+		}
+		// Client implements both LockManager and UploadTracker
+		return client, client
+	}
+
+	log.Info("Redis disabled - running in single-replica mode (no distributed coordination)")
+	return &coordination.NoopLockManager{}, &coordination.NoopUploadTracker{}
+}
+
 // setupServices initialise et configure tous les services
-func setupServices(cfg *config.Config, log *utils.Logger, pm *utils.PathManager, backend storage.Backend) (interfaces.ChartServiceInterface, interfaces.ImageServiceInterface, interfaces.IndexServiceInterface, interfaces.ProxyServiceInterface, *service.BackupService, interfaces.ScanServiceInterface) {
+func setupServices(cfg *config.Config, log *utils.Logger, pm *utils.PathManager, backend storage.Backend, locker coordination.LockManager) (interfaces.ChartServiceInterface, interfaces.ImageServiceInterface, interfaces.IndexServiceInterface, interfaces.ProxyServiceInterface, *service.BackupService, interfaces.ScanServiceInterface) {
 
 	tmpChartService := service.NewChartService(cfg, log, pm, backend, nil)
-	indexService := service.NewIndexService(cfg, log, pm, backend, tmpChartService)
+	indexService := service.NewIndexService(cfg, log, pm, backend, tmpChartService, locker)
 	finalChartService := service.NewChartService(cfg, log, pm, backend, indexService)
 	imageService := service.NewImageService(cfg, log, pm, backend)
 	backupService, err := service.NewBackupService(cfg, log)
@@ -59,7 +78,7 @@ func setupServices(cfg *config.Config, log *utils.Logger, pm *utils.PathManager,
 	// Initialize scan service if enabled
 	var scanService interfaces.ScanServiceInterface
 	if cfg.Trivy.Enabled {
-		scanService = service.NewScanService(cfg, log, pm, backend)
+		scanService = service.NewScanService(cfg, log, pm, backend, locker)
 		log.Info("Trivy scan service enabled")
 	}
 
@@ -75,6 +94,7 @@ func setupHandlers(
 	scanService interfaces.ScanServiceInterface,
 	pathManager *utils.PathManager,
 	backend storage.Backend,
+	uploadTracker coordination.UploadTracker,
 	cfg *config.Config,
 	backupService *service.BackupService,
 	log *utils.Logger,
@@ -82,7 +102,7 @@ func setupHandlers(
 ) (*handlers.HelmHandler, *handlers.ImageHandler, *handlers.OCIHandler, *handlers.ConfigHandler, *handlers.IndexHandler, *handlers.BackupHandler, *handlers.CacheHandler, *handlers.GCHandler, *handlers.ScanHandler) {
 	helmHandler := handlers.NewHelmHandler(chartService, pathManager, log, backend)
 	imageHandler := handlers.NewImageHandler(imageService, proxyService, pathManager, log)
-	ociHandler := handlers.NewOCIHandler(chartService, imageService, proxyService, scanService, cfg, log, pathManager, backend)
+	ociHandler := handlers.NewOCIHandler(chartService, imageService, proxyService, scanService, cfg, log, pathManager, backend, uploadTracker)
 	configHandler := handlers.NewConfigHandler(cfg, log)
 	indexHandler := handlers.NewIndexHandler(chartService, pathManager, log, backend)
 	backupHandler := handlers.NewBackupHandler(backupService, log, cfg)
@@ -152,11 +172,14 @@ func main() {
 	// Storage backend (local or S3)
 	backend := setupBackend(cfg, log)
 
+	// Distributed coordination (Redis or noop)
+	locker, uploadTracker := setupCoordination(cfg, log)
+
 	// PathManager
 	pathManager := utils.NewPathManager(cfg.Storage.Path, log)
 
 	// Services
-	chartService, imageService, indexService, proxyService, backupService, scanService := setupServices(cfg, log, pathManager, backend)
+	chartService, imageService, indexService, proxyService, backupService, scanService := setupServices(cfg, log, pathManager, backend, locker)
 
 	// Ensure index.yaml exists at startup
 	if err := indexService.EnsureIndexExists(); err != nil {
@@ -172,6 +195,7 @@ func main() {
 		scanService,
 		pathManager,
 		backend,
+		uploadTracker,
 		cfg,
 		backupService,
 		log,
@@ -179,14 +203,14 @@ func main() {
 
 	// Fiber app configuration
 	app := fiber.New(fiber.Config{
-		AppName:       "oci storage",
-		Prefork:       false,
-		CaseSensitive: true,
-		StrictRouting: true,
-		ServerHeader:  "oci storage",
-		BodyLimit:          10 * 1024 * 1024 * 1024, // 10GB for large Docker image layers (ML models, etc.)
+		AppName:           "oci storage",
+		Prefork:           false,
+		CaseSensitive:     true,
+		StrictRouting:     true,
+		ServerHeader:      "oci storage",
+		BodyLimit:         10 * 1024 * 1024 * 1024, // 10GB for large Docker image layers (ML models, etc.)
 		StreamRequestBody: true,                     // Enable streaming for large uploads
-		Views:         html.New("./views", ".html"),
+		Views:             html.New("./views", ".html"),
 
 		ErrorHandler: func(c *fiber.Ctx, err error) error {
 			log.WithFields(logrus.Fields{

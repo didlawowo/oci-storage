@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"oci-storage/config"
+	"oci-storage/pkg/coordination"
 	"oci-storage/pkg/models"
 	"oci-storage/pkg/storage"
 	"oci-storage/pkg/utils"
@@ -38,7 +39,7 @@ func setupManifestTestEnv(t *testing.T) (*fiber.App, *MockChartService, *MockIma
 	cfg := &config.Config{}
 	cfg.Storage.Path = tempDir
 
-	handler := NewOCIHandler(mockChartService, mockImageService, nil, nil, cfg, log, pathManager, backend)
+	handler := NewOCIHandler(mockChartService, mockImageService, nil, nil, cfg, log, pathManager, backend, &coordination.NoopUploadTracker{})
 	app := fiber.New()
 
 	cleanup := func() {

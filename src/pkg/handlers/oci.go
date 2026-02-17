@@ -8,8 +8,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"oci-storage/config"
+	"oci-storage/pkg/coordination"
 	interfaces "oci-storage/pkg/interfaces"
 	"oci-storage/pkg/models"
 	"oci-storage/pkg/storage"
@@ -32,14 +34,15 @@ var (
 )
 
 type OCIHandler struct {
-	log          *utils.Logger
-	chartService interfaces.ChartServiceInterface
-	imageService interfaces.ImageServiceInterface
-	proxyService interfaces.ProxyServiceInterface
-	scanService  interfaces.ScanServiceInterface
-	pathManager  *utils.PathManager
-	backend      storage.Backend
-	config       *config.Config
+	log            *utils.Logger
+	chartService   interfaces.ChartServiceInterface
+	imageService   interfaces.ImageServiceInterface
+	proxyService   interfaces.ProxyServiceInterface
+	scanService    interfaces.ScanServiceInterface
+	pathManager    *utils.PathManager
+	backend        storage.Backend
+	uploadTracker  coordination.UploadTracker
+	config         *config.Config
 }
 
 func NewOCIHandler(
@@ -51,16 +54,18 @@ func NewOCIHandler(
 	log *utils.Logger,
 	pm *utils.PathManager,
 	backend storage.Backend,
+	uploadTracker coordination.UploadTracker,
 ) *OCIHandler {
 	return &OCIHandler{
-		chartService: chartService,
-		imageService: imageService,
-		proxyService: proxyService,
-		scanService:  scanService,
-		config:       cfg,
-		log:          log,
-		pathManager:  pm,
-		backend:      backend,
+		chartService:  chartService,
+		imageService:  imageService,
+		proxyService:  proxyService,
+		scanService:   scanService,
+		config:        cfg,
+		log:           log,
+		pathManager:   pm,
+		backend:       backend,
+		uploadTracker: uploadTracker,
 	}
 }
 
@@ -507,6 +512,12 @@ func (h *OCIHandler) PostUpload(c *fiber.Ctx) error {
 		"uuid": uuid,
 	}).Debug("Initializing upload")
 
+	// Register upload session so other replicas know this pod owns it.
+	// TTL of 1 hour covers even very large chunked uploads.
+	if err := h.uploadTracker.Register(c.Context(), uuid, 1*time.Hour); err != nil {
+		h.log.WithError(err).Warn("Failed to register upload session")
+	}
+
 	// Build absolute URL for Location header (required by crane and other OCI clients)
 	scheme := "http"
 	if c.Protocol() == "https" {
@@ -526,6 +537,12 @@ func (h *OCIHandler) PatchBlob(c *fiber.Ctx) error {
 	if err := utils.ValidateUUID(uuid); err != nil {
 		h.log.WithField("uuid", uuid).Warn("Invalid UUID format")
 		return HTTPError(c, 400, "Invalid UUID format")
+	}
+
+	// Check that this upload belongs to this pod (multi-replica safety)
+	if err := h.uploadTracker.CheckOwnership(c.Context(), uuid); err != nil {
+		h.log.WithError(err).WithField("uuid", uuid).Error("Upload routed to wrong replica")
+		return HTTPError(c, 409, fmt.Sprintf("UPLOAD_INVALID: %s - configure session affinity on your load balancer", err.Error()))
 	}
 
 	tempPath := h.pathManager.GetTempPath(uuid)
@@ -599,6 +616,12 @@ func (h *OCIHandler) CompleteUpload(c *fiber.Ctx) error {
 		return HTTPError(c, 400, "Invalid digest format")
 	}
 
+	// Check that this upload belongs to this pod (multi-replica safety)
+	if err := h.uploadTracker.CheckOwnership(c.Context(), uuid); err != nil {
+		h.log.WithError(err).WithField("uuid", uuid).Error("Upload routed to wrong replica")
+		return HTTPError(c, 409, fmt.Sprintf("UPLOAD_INVALID: %s - configure session affinity on your load balancer", err.Error()))
+	}
+
 	tempPath := h.pathManager.GetTempPath(uuid)
 	finalPath := h.pathManager.GetBlobPath(digest)
 
@@ -648,6 +671,11 @@ func (h *OCIHandler) CompleteUpload(c *fiber.Ctx) error {
 	if err := h.backend.Import(tempPath, finalPath); err != nil {
 		h.log.WithFunc().WithError(err).Error("Failed to finalize upload")
 		return c.SendStatus(500)
+	}
+
+	// Clean up upload session tracking
+	if err := h.uploadTracker.Remove(c.Context(), uuid); err != nil {
+		h.log.WithError(err).Debug("Failed to remove upload tracking entry")
 	}
 
 	c.Set("Docker-Content-Digest", digest)

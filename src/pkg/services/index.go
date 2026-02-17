@@ -3,21 +3,21 @@
 package service
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"path/filepath"
+	"time"
 
 	"github.com/sirupsen/logrus"
 	"gopkg.in/yaml.v2"
 
 	"oci-storage/config"
-
+	"oci-storage/pkg/coordination"
 	"oci-storage/pkg/interfaces"
 	"oci-storage/pkg/storage"
 	utils "oci-storage/pkg/utils"
-
-	"time"
 )
 
 // IndexFile représente la structure de index.yaml
@@ -46,6 +46,7 @@ type IndexService struct {
 	log          *utils.Logger
 	baseURL      string
 	chartService interfaces.ChartServiceInterface
+	locker       coordination.LockManager
 }
 
 // GetIndexPath returns the path to index.yaml
@@ -53,13 +54,14 @@ func (s *IndexService) GetIndexPath() string {
 	return s.pathManager.GetIndexPath()
 }
 
-func NewIndexService(config *config.Config, log *utils.Logger, pm *utils.PathManager, backend storage.Backend, chartService interfaces.ChartServiceInterface) *IndexService {
+func NewIndexService(config *config.Config, log *utils.Logger, pm *utils.PathManager, backend storage.Backend, chartService interfaces.ChartServiceInterface, locker coordination.LockManager) *IndexService {
 	return &IndexService{
 		pathManager:  pm,
 		backend:      backend,
 		config:       config,
 		log:          log,
 		chartService: chartService,
+		locker:       locker,
 	}
 }
 
@@ -72,8 +74,29 @@ func (s *IndexService) EnsureIndexExists() error {
 	return nil
 }
 
-// generateIndex crée ou met à jour le fichier index.yaml
+// UpdateIndex regenerates index.yaml with a distributed lock to prevent
+// concurrent writes from multiple replicas.
 func (s *IndexService) UpdateIndex() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Acquire distributed lock - only one replica regenerates the index at a time.
+	// Retry a few times since another replica may be updating concurrently.
+	var unlock func()
+	var err error
+	for attempt := 0; attempt < 5; attempt++ {
+		unlock, err = s.locker.Acquire(ctx, "index-update", 30*time.Second)
+		if err == nil {
+			break
+		}
+		s.log.WithField("attempt", attempt+1).Debug("Index lock held by another replica, retrying...")
+		time.Sleep(time.Duration(200*(attempt+1)) * time.Millisecond)
+	}
+	if err != nil {
+		return fmt.Errorf("could not acquire index lock: %w", err)
+	}
+	defer unlock()
+
 	s.log.Info("Generating index.yaml")
 
 	// Créer un nouvel index
