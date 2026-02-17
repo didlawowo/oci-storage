@@ -253,6 +253,68 @@ func (b *S3Backend) CreateTemp(dir string) (TempFile, error) {
 	return &s3TempFile{file: f, backend: b}, nil
 }
 
+func (b *S3Backend) Import(localPath, storagePath string) error {
+	file, err := os.Open(localPath)
+	if err != nil {
+		return fmt.Errorf("failed to open local file for import: %w", err)
+	}
+	defer file.Close()
+
+	info, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("failed to stat local file: %w", err)
+	}
+
+	_, err = b.client.PutObject(&s3.PutObjectInput{
+		Bucket:        aws.String(b.bucket),
+		Key:           aws.String(b.key(storagePath)),
+		Body:          file,
+		ContentLength: aws.Int64(info.Size()),
+	})
+	if err != nil {
+		return fmt.Errorf("S3 upload failed: %w", err)
+	}
+
+	return os.Remove(localPath)
+}
+
+func (b *S3Backend) RemoveAll(path string) error {
+	prefix := b.key(path)
+	if prefix != "" && !strings.HasSuffix(prefix, "/") {
+		prefix += "/"
+	}
+
+	// List all objects under prefix and delete them
+	listInput := &s3.ListObjectsV2Input{
+		Bucket: aws.String(b.bucket),
+		Prefix: aws.String(prefix),
+	}
+
+	for {
+		out, err := b.client.ListObjectsV2(listInput)
+		if err != nil {
+			return fmt.Errorf("failed to list objects for removal: %w", err)
+		}
+
+		for _, obj := range out.Contents {
+			_, err := b.client.DeleteObject(&s3.DeleteObjectInput{
+				Bucket: aws.String(b.bucket),
+				Key:    obj.Key,
+			})
+			if err != nil {
+				return fmt.Errorf("failed to delete object %s: %w", aws.StringValue(obj.Key), err)
+			}
+		}
+
+		if !aws.BoolValue(out.IsTruncated) {
+			break
+		}
+		listInput.ContinuationToken = out.NextContinuationToken
+	}
+
+	return nil
+}
+
 // isS3NotFound checks if an S3 error is a 404/NoSuchKey
 func isS3NotFound(err error) bool {
 	if err == nil {

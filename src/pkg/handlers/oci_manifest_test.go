@@ -13,6 +13,7 @@ import (
 
 	"oci-storage/config"
 	"oci-storage/pkg/models"
+	"oci-storage/pkg/storage"
 	"oci-storage/pkg/utils"
 
 	"github.com/gofiber/fiber/v2"
@@ -30,12 +31,14 @@ func setupManifestTestEnv(t *testing.T) (*fiber.App, *MockChartService, *MockIma
 	mockImageService := new(MockImageService)
 	pathManager := utils.NewPathManager(tempDir, log)
 
+	backend := storage.NewLocalBackend(tempDir)
+
 	mockChartService.On("GetPathManager").Return(pathManager)
 
 	cfg := &config.Config{}
 	cfg.Storage.Path = tempDir
 
-	handler := NewOCIHandler(mockChartService, mockImageService, nil, nil, cfg, log)
+	handler := NewOCIHandler(mockChartService, mockImageService, nil, nil, cfg, log, pathManager, backend)
 	app := fiber.New()
 
 	cleanup := func() {

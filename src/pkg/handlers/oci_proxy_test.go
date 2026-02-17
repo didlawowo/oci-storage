@@ -10,6 +10,7 @@ import (
 
 	"oci-storage/config"
 	"oci-storage/pkg/models"
+	"oci-storage/pkg/storage"
 	"oci-storage/pkg/utils"
 
 	"github.com/gofiber/fiber/v2"
@@ -27,6 +28,8 @@ func setupProxyTestEnv(t *testing.T) (*fiber.App, *MockChartService, *MockImageS
 	mockProxyService := new(MockProxyService)
 	pathManager := utils.NewPathManager(tempDir, log)
 
+	backend := storage.NewLocalBackend(tempDir)
+
 	mockChartService.On("GetPathManager").Return(pathManager)
 
 	cfg := &config.Config{
@@ -41,7 +44,7 @@ func setupProxyTestEnv(t *testing.T) (*fiber.App, *MockChartService, *MockImageS
 		},
 	}
 
-	handler := NewOCIHandler(mockChartService, mockImageService, mockProxyService, nil, cfg, log)
+	handler := NewOCIHandler(mockChartService, mockImageService, mockProxyService, nil, cfg, log, pathManager, backend)
 	app := fiber.New()
 
 	cleanup := func() {

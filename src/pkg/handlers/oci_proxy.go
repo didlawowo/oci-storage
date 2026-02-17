@@ -2,13 +2,10 @@ package handlers
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,6 +15,8 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/sirupsen/logrus"
+
+	"net/http"
 )
 
 // calculateBlobTimeout returns a dynamic timeout based on blob size
@@ -48,11 +47,11 @@ func (h *OCIHandler) calculateBlobTimeout(sizeBytes int64) time.Duration {
 func (h *OCIHandler) proxyBlob(c *fiber.Ctx, name, digest string) error {
 	// Check if blob is already cached before doing anything
 	blobPath := h.pathManager.GetBlobPath(digest)
-	if _, err := os.Stat(blobPath); err == nil {
+	if exists, _ := h.backend.Exists(blobPath); exists {
 		h.log.WithField("digest", digest).Debug("Blob already cached, serving from cache")
 		c.Set("Docker-Content-Digest", digest)
 		c.Set("Content-Type", "application/octet-stream")
-		return c.SendFile(blobPath)
+		return h.sendBlob(c, blobPath)
 	}
 
 	registryURL, upstreamName, err := h.proxyService.ResolveRegistry(name)
@@ -118,22 +117,20 @@ func (h *OCIHandler) proxyBlob(c *fiber.Ctx, name, digest string) error {
 	}).Debug("Semaphore acquired for blob download")
 
 	// Double-check after acquiring semaphore (another goroutine may have completed download)
-	if _, err := os.Stat(blobPath); err == nil {
+	if exists, _ := h.backend.Exists(blobPath); exists {
 		h.log.WithField("digest", digest).Debug("Blob cached by another request, serving from cache")
 		c.Set("Docker-Content-Digest", digest)
 		c.Set("Content-Type", "application/octet-stream")
-		return c.SendFile(blobPath)
+		return h.sendBlob(c, blobPath)
 	}
 
-	if err := os.MkdirAll(filepath.Dir(blobPath), 0755); err != nil {
-		h.log.WithError(err).Warn("Failed to create blob directory")
+	// Download to a local temp file, then import to backend
+	tempDir := filepath.Dir(h.pathManager.GetTempPath("proxy"))
+	if err := os.MkdirAll(tempDir, 0755); err != nil {
+		h.log.WithError(err).Warn("Failed to create temp directory")
 	}
 
-	// Download to temp file with unique suffix to prevent concurrent download collisions
-	randBytes := make([]byte, 8)
-	rand.Read(randBytes)
-	tempPath := blobPath + ".tmp." + hex.EncodeToString(randBytes)
-	file, err := os.Create(tempPath)
+	tmpFile, err := os.CreateTemp(tempDir, "proxy-blob-*")
 	if err != nil {
 		h.log.WithError(err).Warn("Failed to create blob cache file, streaming without caching")
 		c.Set("Docker-Content-Digest", digest)
@@ -143,9 +140,10 @@ func (h *OCIHandler) proxyBlob(c *fiber.Ctx, name, digest string) error {
 		}
 		return c.SendStream(reader)
 	}
+	tempPath := tmpFile.Name()
 
-	written, err := io.Copy(file, reader)
-	file.Close()
+	written, err := io.Copy(tmpFile, reader)
+	tmpFile.Close()
 	if err != nil {
 		h.log.WithError(err).Error("Failed to download blob to cache")
 		os.Remove(tempPath)
@@ -163,9 +161,9 @@ func (h *OCIHandler) proxyBlob(c *fiber.Ctx, name, digest string) error {
 		return c.SendStatus(502)
 	}
 
-	// Atomically rename temp file to final path
-	if err := os.Rename(tempPath, blobPath); err != nil {
-		h.log.WithError(err).Error("Failed to rename temp blob file")
+	// Import temp file to backend storage
+	if err := h.backend.Import(tempPath, blobPath); err != nil {
+		h.log.WithError(err).Error("Failed to import blob to storage")
 		os.Remove(tempPath)
 		return c.SendStatus(502)
 	}
@@ -175,10 +173,10 @@ func (h *OCIHandler) proxyBlob(c *fiber.Ctx, name, digest string) error {
 		"size":   written,
 	}).Info("Blob proxied and cached successfully")
 
-	// Serve from cache
+	// Serve from backend
 	c.Set("Docker-Content-Digest", digest)
 	c.Set("Content-Type", "application/octet-stream")
-	return c.SendFile(blobPath)
+	return h.sendBlob(c, blobPath)
 }
 
 // proxyManifest fetches a manifest from upstream and caches it
@@ -210,10 +208,8 @@ func (h *OCIHandler) proxyManifest(c *fiber.Ctx, name, reference string) error {
 	// Cache manifest as blob (for digest-based lookups of child manifests)
 	go func() {
 		blobPath := h.pathManager.GetBlobPath(digest)
-		if err := os.MkdirAll(filepath.Dir(blobPath), 0755); err == nil {
-			if err := os.WriteFile(blobPath, manifestData, 0644); err != nil {
-				h.log.WithError(err).Warn("Failed to cache manifest as blob")
-			}
+		if err := h.backend.Write(blobPath, manifestData); err != nil {
+			h.log.WithError(err).Warn("Failed to cache manifest as blob")
 		}
 	}()
 
@@ -287,10 +283,8 @@ func (h *OCIHandler) cacheManifest(name, reference string, manifestData []byte, 
 		// For manifest lists, save the raw bytes directly to preserve the manifests array
 		// Don't use SaveImage as it will corrupt the data by re-marshaling as OCIManifest
 		manifestPath := h.pathManager.GetImageManifestPath(name, reference)
-		if err := os.MkdirAll(filepath.Dir(manifestPath), 0755); err == nil {
-			if err := os.WriteFile(manifestPath, manifestData, 0644); err != nil {
-				h.log.WithError(err).Warn("Failed to save manifest list")
-			}
+		if err := h.backend.Write(manifestPath, manifestData); err != nil {
+			h.log.WithError(err).Warn("Failed to save manifest list")
 		}
 
 		// Save metadata so the image appears in /images listing
@@ -373,16 +367,14 @@ func (h *OCIHandler) prefetchPlatformManifests(index models.OCIIndex, registryUR
 		}
 
 		blobPath := h.pathManager.GetBlobPath(desc.Digest)
-		if err := os.MkdirAll(filepath.Dir(blobPath), 0755); err == nil {
-			if err := os.WriteFile(blobPath, manifestData, 0644); err != nil {
-				h.log.WithError(err).Warn("Failed to cache platform manifest as blob")
-			} else {
-				h.log.WithFields(logrus.Fields{
-					"platform": platformKey,
-					"digest":   desc.Digest,
-					"size":     len(manifestData),
-				}).Info("Platform manifest prefetched and cached")
-			}
+		if err := h.backend.Write(blobPath, manifestData); err != nil {
+			h.log.WithError(err).Warn("Failed to cache platform manifest as blob")
+		} else {
+			h.log.WithFields(logrus.Fields{
+				"platform": platformKey,
+				"digest":   desc.Digest,
+				"size":     len(manifestData),
+			}).Info("Platform manifest prefetched and cached")
 		}
 	}
 }

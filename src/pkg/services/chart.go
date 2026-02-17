@@ -8,13 +8,13 @@ import (
 	"compress/gzip"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
 	"oci-storage/config"
 	"oci-storage/pkg/models"
+	"oci-storage/pkg/storage"
 	utils "oci-storage/pkg/utils"
 
 	"github.com/sirupsen/logrus"
@@ -30,6 +30,7 @@ type IndexUpdater interface {
 // ChartService handles chart operations
 type ChartService struct {
 	pathManager *utils.PathManager
+	backend     storage.Backend
 	config      *config.Config
 	log         *utils.Logger
 
@@ -37,12 +38,10 @@ type ChartService struct {
 }
 
 // NewChartService creates a new chart service
-func NewChartService(config *config.Config, log *utils.Logger, indexUpdater IndexUpdater) *ChartService {
-	if err := os.MkdirAll(config.Storage.Path, 0755); err != nil {
-		log.WithError(err).Error("❌ Impossible de créer le dossier de stockage")
-	}
+func NewChartService(config *config.Config, log *utils.Logger, pm *utils.PathManager, backend storage.Backend, indexUpdater IndexUpdater) *ChartService {
 	return &ChartService{
-		pathManager:  utils.NewPathManager(config.Storage.Path, log),
+		pathManager:  pm,
+		backend:      backend,
 		config:       config,
 		log:          log,
 		indexUpdater: indexUpdater,
@@ -54,48 +53,40 @@ func (s *ChartService) GetPathManager() *utils.PathManager {
 
 // SaveChart saves an uploaded chart file
 func (s *ChartService) SaveChart(chartData []byte, filename string) error {
-	// ✨ Create charts directory if not exists
-	chartsDir := s.pathManager.GetChartsPath()
-
-	// 💾 Save chart file
-	chartPath := filepath.Join(chartsDir, filename)
-	if err := os.WriteFile(chartPath, chartData, 0644); err != nil {
-		return fmt.Errorf("❌ failed to save chart: %w", err)
+	chartPath := filepath.Join(s.pathManager.GetChartsPath(), filename)
+	if err := s.backend.Write(chartPath, chartData); err != nil {
+		return fmt.Errorf("failed to save chart: %w", err)
 	}
 
-	// 📝 Extract and validate metadata
 	metadata, err := s.ExtractChartMetadata(chartData)
 	if err != nil {
-		return fmt.Errorf("❌ failed to extract chart metadata: %w", err)
+		return fmt.Errorf("failed to extract chart metadata: %w", err)
 	}
 
 	if err := s.indexUpdater.UpdateIndex(); err != nil {
-		s.log.WithError(err).Error("❌ Échec mise à jour index")
-		return fmt.Errorf("échec mise à jour index: %w", err)
+		s.log.WithError(err).Error("Failed to update index")
+		return fmt.Errorf("failed to update index: %w", err)
 	}
 
 	s.log.WithFields(logrus.Fields{
 		"name":    metadata.Name,
 		"version": metadata.Version,
 		"file":    filename,
-	}).Info("✅ Chart saved successfully")
+	}).Info("Chart saved successfully")
 
 	return nil
 }
 
-// extractChartMetadata extracts Chart.yaml from the tgz file
+// ExtractChartMetadata extracts Chart.yaml from the tgz file
 func (s *ChartService) ExtractChartMetadata(chartData []byte) (*models.ChartMetadata, error) {
-	// 📦 Read the gzip file
 	gr, err := gzip.NewReader(bytes.NewReader(chartData))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gzip reader: %w", err)
 	}
 	defer gr.Close()
 
-	// 📂 Read the tar archive
 	tr := tar.NewReader(gr)
 
-	// 🔍 Look for Chart.yaml
 	for {
 		header, err := tr.Next()
 		if err == io.EOF {
@@ -105,15 +96,12 @@ func (s *ChartService) ExtractChartMetadata(chartData []byte) (*models.ChartMeta
 			return nil, err
 		}
 
-		// Find Chart.yaml in the root directory of the chart
 		if filepath.Base(header.Name) == "Chart.yaml" {
-			// Read the Chart.yaml content
 			content, err := io.ReadAll(tr)
 			if err != nil {
 				return nil, err
 			}
 
-			// Parse YAML
 			var metadata models.ChartMetadata
 			if err := yaml.Unmarshal(content, &metadata); err != nil {
 				return nil, err
@@ -131,65 +119,56 @@ func (s *ChartService) ListCharts() ([]models.ChartGroup, error) {
 	chartsDir := s.pathManager.GetChartsPath()
 	var chartMetadatas []models.ChartMetadata
 
-	// Read charts directory
-	files, err := os.ReadDir(chartsDir)
+	files, err := s.backend.List(chartsDir)
 	if err != nil {
 		return nil, err
 	}
 
-	// Process each .tgz file
 	for _, file := range files {
-		if !strings.HasSuffix(file.Name(), ".tgz") {
+		if !strings.HasSuffix(file.Name, ".tgz") {
 			continue
 		}
 
-		// Read chart data
-		chartData, err := os.ReadFile(filepath.Join(chartsDir, file.Name()))
+		chartData, err := s.backend.Read(filepath.Join(chartsDir, file.Name))
 		if err != nil {
-			s.log.WithError(err).WithField("file", file.Name()).Error("Failed to read chart")
+			s.log.WithError(err).WithField("file", file.Name).Error("Failed to read chart")
 			continue
 		}
 
-		// Extract metadata
 		metadata, err := s.ExtractChartMetadata(chartData)
 		if err != nil {
-			s.log.WithError(err).WithField("file", file.Name()).Error("Failed to extract metadata")
+			s.log.WithError(err).WithField("file", file.Name).Error("Failed to extract metadata")
 			continue
 		}
 
 		chartMetadatas = append(chartMetadatas, *metadata)
 	}
 
-	// Utiliser GroupChartsByName pour grouper les charts
 	return models.GroupChartsByName(chartMetadatas), nil
 }
 
 func (s *ChartService) ChartExists(chartName string, version string) bool {
-	_, err := os.Stat(s.pathManager.GetChartPath(chartName, version))
-	return !os.IsNotExist(err)
+	exists, _ := s.backend.Exists(s.pathManager.GetChartPath(chartName, version))
+	return exists
 }
 
 func (s *ChartService) GetChart(chartName string, version string) ([]byte, error) {
 	chartPath := s.pathManager.GetChartPath(chartName, version)
-	// Vérifier si le chart existe
 	if !s.ChartExists(chartName, version) {
 		return nil, fmt.Errorf("chart %s version %s not found", chartName, version)
 	}
 
-	return os.ReadFile(chartPath)
+	return s.backend.Read(chartPath)
 }
 
 func (s *ChartService) GetChartDetails(chartName string, version string) (*models.ChartMetadata, error) {
-	chartPath := s.pathManager.GetChartPath(chartName, version)
-	// Vérifier si le chart existe
 	if !s.ChartExists(chartName, version) {
 		return nil, fmt.Errorf("chart %s version %s not found", chartName, version)
 	}
-	chartData, err := os.ReadFile(chartPath)
+	chartData, err := s.backend.Read(s.pathManager.GetChartPath(chartName, version))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read chart: %w", err)
 	}
-	// Extract metadata
 	metadata, err := s.ExtractChartMetadata(chartData)
 	if err != nil {
 		return nil, fmt.Errorf("failed to extract metadata: %w", err)
@@ -202,23 +181,21 @@ func (s *ChartService) ListChartVersions(chartName string) ([]string, error) {
 	chartsDir := s.pathManager.GetChartsPath()
 	var versions []string
 
-	files, err := os.ReadDir(chartsDir)
+	files, err := s.backend.List(chartsDir)
 	if err != nil {
 		return nil, err
 	}
 
 	prefix := chartName + "-"
 	for _, file := range files {
-		name := file.Name()
+		name := file.Name
 		if !strings.HasSuffix(name, ".tgz") || !strings.HasPrefix(name, prefix) {
 			continue
 		}
-		// Extract version from filename: chartName-version.tgz
 		version := strings.TrimSuffix(strings.TrimPrefix(name, prefix), ".tgz")
 		versions = append(versions, version)
 	}
 
-	// Sort versions in descending order (newest first)
 	sort.Sort(sort.Reverse(sort.StringSlice(versions)))
 
 	return versions, nil
@@ -227,39 +204,32 @@ func (s *ChartService) ListChartVersions(chartName string) ([]string, error) {
 func (s *ChartService) DeleteChart(chartName string, version string) error {
 	chartPath := s.pathManager.GetChartPath(chartName, version)
 
-	// Vérifier si le chart existe
 	if !s.ChartExists(chartName, version) {
 		return fmt.Errorf("chart %s version %s not found", chartName, version)
 	}
 
-	// Supprimer le fichier
-	if err := os.Remove(chartPath); err != nil {
+	if err := s.backend.Delete(chartPath); err != nil {
 		return fmt.Errorf("failed to delete chart: %w", err)
 	}
 
-	// Mettre à jour l'index
 	return s.indexUpdater.UpdateIndex()
 }
 
 func (s *ChartService) GetChartValues(chartName string, version string) (string, error) {
-	// 📂 Récupérer le chemin du chart
 	chartPath := s.pathManager.GetChartPath(chartName, version)
 
-	// 📦 Ouvrir le fichier tgz
-	f, err := os.Open(chartPath)
+	reader, err := s.backend.ReadStream(chartPath)
 	if err != nil {
-		return "", fmt.Errorf("❌ failed to open chart file: %w", err)
+		return "", fmt.Errorf("failed to open chart file: %w", err)
 	}
-	defer f.Close()
+	defer reader.Close()
 
-	// 🗜️ Lire le contenu du tgz
-	gzf, err := gzip.NewReader(f)
+	gzf, err := gzip.NewReader(reader)
 	if err != nil {
-		return "", fmt.Errorf("❌ failed to create gzip reader: %w", err)
+		return "", fmt.Errorf("failed to create gzip reader: %w", err)
 	}
 	defer gzf.Close()
 
-	// 📄 Lire le tar
 	tr := tar.NewReader(gzf)
 	for {
 		header, err := tr.Next()
@@ -267,18 +237,17 @@ func (s *ChartService) GetChartValues(chartName string, version string) (string,
 			break
 		}
 		if err != nil {
-			return "", fmt.Errorf("❌ failed to read tar: %w", err)
+			return "", fmt.Errorf("failed to read tar: %w", err)
 		}
 
-		// 🔍 Chercher values.yaml
 		if strings.HasSuffix(header.Name, "values.yaml") {
 			content, err := io.ReadAll(tr)
 			if err != nil {
-				return "", fmt.Errorf("❌ failed to read values.yaml: %w", err)
+				return "", fmt.Errorf("failed to read values.yaml: %w", err)
 			}
 			return string(content), nil
 		}
 	}
 
-	return "", fmt.Errorf("❌ values.yaml not found in chart")
+	return "", fmt.Errorf("values.yaml not found in chart")
 }

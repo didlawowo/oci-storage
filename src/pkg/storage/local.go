@@ -160,3 +160,15 @@ func (b *LocalBackend) CreateTemp(dir string) (TempFile, error) {
 	}
 	return &localTempFile{file: f}, nil
 }
+
+func (b *LocalBackend) Import(localPath, storagePath string) error {
+	fullDst := b.resolve(storagePath)
+	if err := os.MkdirAll(filepath.Dir(fullDst), 0755); err != nil {
+		return err
+	}
+	return os.Rename(localPath, fullDst)
+}
+
+func (b *LocalBackend) RemoveAll(path string) error {
+	return os.RemoveAll(b.resolve(path))
+}

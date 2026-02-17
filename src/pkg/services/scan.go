@@ -13,6 +13,7 @@ import (
 
 	"oci-storage/config"
 	"oci-storage/pkg/models"
+	"oci-storage/pkg/storage"
 	"oci-storage/pkg/utils"
 
 	"github.com/sirupsen/logrus"
@@ -23,24 +24,20 @@ type ScanService struct {
 	config       *config.Config
 	log          *utils.Logger
 	pathManager  *utils.PathManager
+	backend      storage.Backend
 	scanMutex    sync.RWMutex
-	scanSem      chan struct{}   // limits concurrent scans
+	scanSem      chan struct{}    // limits concurrent scans
 	inProgressMu sync.RWMutex    // protects inProgress map
 	inProgress   map[string]bool // tracks digests currently being scanned
 }
 
 // NewScanService creates a new ScanService
-func NewScanService(cfg *config.Config, log *utils.Logger, pathManager *utils.PathManager) *ScanService {
-	// Create scan results and decisions directories
-	scanResultsDir := filepath.Join(cfg.Storage.Path, "scan-results")
-	scanDecisionsDir := filepath.Join(cfg.Storage.Path, "scan-decisions")
-	_ = os.MkdirAll(scanResultsDir, 0755)
-	_ = os.MkdirAll(scanDecisionsDir, 0755)
-
+func NewScanService(cfg *config.Config, log *utils.Logger, pathManager *utils.PathManager, backend storage.Backend) *ScanService {
 	return &ScanService{
 		config:      cfg,
 		log:         log,
 		pathManager: pathManager,
+		backend:     backend,
 		scanSem:     make(chan struct{}, 3), // max 3 concurrent scans
 		inProgress:  make(map[string]bool),
 	}
@@ -58,7 +55,6 @@ func (s *ScanService) IsScanInProgress(digest string) bool {
 	return s.inProgress[digest]
 }
 
-// setScanInProgress marks a digest as being scanned
 func (s *ScanService) setScanInProgress(digest string, inProgress bool) {
 	s.inProgressMu.Lock()
 	defer s.inProgressMu.Unlock()
@@ -70,24 +66,20 @@ func (s *ScanService) setScanInProgress(digest string, inProgress bool) {
 }
 
 // TriggerScan forces a vulnerability scan for the given image, ignoring TTL
-// Returns: "started" if scan was triggered, "in_progress" if already scanning, "disabled" if trivy disabled
 func (s *ScanService) TriggerScan(name, ref, digest string) string {
 	if !s.IsEnabled() {
 		return "disabled"
 	}
 
-	// Check if already in progress
 	if s.IsScanInProgress(digest) {
 		return "in_progress"
 	}
 
-	// Mark as in progress and start scan
 	s.setScanInProgress(digest, true)
 
 	go func() {
 		defer s.setScanInProgress(digest, false)
 
-		// Acquire semaphore
 		s.scanSem <- struct{}{}
 		defer func() { <-s.scanSem }()
 
@@ -103,13 +95,11 @@ func (s *ScanService) TriggerScan(name, ref, digest string) string {
 			return
 		}
 
-		// Save scan result
 		if err := s.saveScanResult(result); err != nil {
 			s.log.WithFunc().WithError(err).Error("Failed to save scan result")
 			return
 		}
 
-		// Evaluate policy and create decision
 		status := s.evaluatePolicy(result)
 		s.log.WithFunc().WithFields(logrus.Fields{
 			"digest":   digest,
@@ -118,7 +108,6 @@ func (s *ScanService) TriggerScan(name, ref, digest string) string {
 			"high":     result.High,
 		}).Info("Triggered scan completed")
 
-		// Auto-create decision
 		if status == "approved" {
 			if err := s.SetDecision(digest, "approved", "Auto-approved: within policy thresholds", "system", 0); err != nil {
 				s.log.WithFunc().WithError(err).Error("Failed to set approved decision")
@@ -139,7 +128,6 @@ func (s *ScanService) ScanImage(name, ref, digest string) {
 		return
 	}
 
-	// Check if already scanned (and not expired)
 	if result, err := s.GetScanResult(digest); err == nil && result != nil {
 		ttl := s.config.Trivy.Policy.TTLHours
 		if ttl <= 0 {
@@ -152,7 +140,6 @@ func (s *ScanService) ScanImage(name, ref, digest string) {
 	}
 
 	go func() {
-		// Acquire semaphore
 		s.scanSem <- struct{}{}
 		defer func() { <-s.scanSem }()
 
@@ -168,13 +155,11 @@ func (s *ScanService) ScanImage(name, ref, digest string) {
 			return
 		}
 
-		// Save scan result
 		if err := s.saveScanResult(result); err != nil {
 			s.log.WithFunc().WithError(err).Error("Failed to save scan result")
 			return
 		}
 
-		// Evaluate policy and create decision
 		status := s.evaluatePolicy(result)
 		s.log.WithFunc().WithFields(logrus.Fields{
 			"digest":   digest,
@@ -183,7 +168,6 @@ func (s *ScanService) ScanImage(name, ref, digest string) {
 			"high":     result.High,
 		}).Info("Scan completed")
 
-		// Auto-create decision
 		if status == "approved" {
 			if err := s.SetDecision(digest, "approved", "Auto-approved: within policy thresholds", "system", 0); err != nil {
 				s.log.WithFunc().WithError(err).Error("Failed to set approved decision")
@@ -196,19 +180,17 @@ func (s *ScanService) ScanImage(name, ref, digest string) {
 	}()
 }
 
-// detectImagePlatform reads stored image metadata to determine the actual platform.
-// Returns "os/architecture" (e.g. "linux/arm64"). Falls back to "linux/amd64".
+// detectImagePlatform reads stored image metadata to determine the actual platform
 func (s *ScanService) detectImagePlatform(name, ref string) string {
 	defaultPlatform := "linux/amd64"
 
-	// Try to read image metadata from disk
 	tag := ref
 	if tag == "" || strings.HasPrefix(tag, "sha256:") {
 		tag = "latest"
 	}
-	metadataPath := filepath.Join(s.pathManager.GetBasePath(), "images", name, "tags", tag+".json")
+	metadataPath := filepath.Join("images", name, "tags", tag+".json")
 
-	data, err := os.ReadFile(metadataPath)
+	data, err := s.backend.Read(metadataPath)
 	if err != nil {
 		s.log.WithFunc().WithField("path", metadataPath).Debug("Could not read image metadata for platform detection, using default")
 		return defaultPlatform
@@ -220,7 +202,6 @@ func (s *ScanService) detectImagePlatform(name, ref string) string {
 		return defaultPlatform
 	}
 
-	// Use platforms from manifest list if available
 	if len(metadata.Platforms) > 0 {
 		p := metadata.Platforms[0]
 		platform := fmt.Sprintf("%s/%s", p.OS, p.Architecture)
@@ -228,7 +209,6 @@ func (s *ScanService) detectImagePlatform(name, ref string) string {
 		return platform
 	}
 
-	// Fall back to config-level architecture info
 	if metadata.Config != nil && metadata.Config.Architecture != "" {
 		os_ := metadata.Config.OS
 		if os_ == "" {
@@ -242,20 +222,12 @@ func (s *ScanService) detectImagePlatform(name, ref string) string {
 	return defaultPlatform
 }
 
-// executeScan runs Trivy CLI in client-server mode to scan an image.
-// In this mode, the Trivy CLI runs locally and connects to the Trivy server
-// (sidecar) for the vulnerability database. Scanning happens client-side.
-// It uses "trivy image --server <url>" to scan by image reference.
 func (s *ScanService) executeScan(name, ref, digest string) (*models.ScanResult, error) {
 	trivyURL := s.config.Trivy.ServerURL
 	if trivyURL == "" {
 		trivyURL = "http://localhost:4954"
 	}
 
-	// Build the image reference pointing to our own registry so Trivy
-	// pulls layers from localhost, not from the upstream registry.
-	// Always prefer tag over digest to avoid multi-arch manifest index issues
-	// (Trivy cannot resolve a platform from a bare digest on a manifest list).
 	registryHost := fmt.Sprintf("localhost:%d", s.config.Server.Port)
 	var imageRef string
 	if ref != "" && !strings.HasPrefix(ref, "sha256:") {
@@ -266,11 +238,8 @@ func (s *ScanService) executeScan(name, ref, digest string) (*models.ScanResult,
 		imageRef = fmt.Sprintf("%s/%s:%s", registryHost, name, ref)
 	}
 
-	// Detect the actual platform from stored image metadata.
-	// This avoids hardcoding linux/amd64 which fails for arm64-only images.
 	platform := s.detectImagePlatform(name, ref)
 
-	// Build trivy command arguments
 	args := []string{
 		"image",
 		"--server", trivyURL,
@@ -296,21 +265,17 @@ func (s *ScanService) executeScan(name, ref, digest string) (*models.ScanResult,
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		// Trivy exits non-zero when vulnerabilities are found — that's expected.
-		// Only treat as error if we got no JSON output at all.
 		if stdout.Len() == 0 {
 			return nil, fmt.Errorf("trivy scan failed: %w, stderr: %s", err, stderr.String())
 		}
 		s.log.WithFunc().WithField("stderr", stderr.String()).Debug("Trivy exited non-zero (vulnerabilities found)")
 	}
 
-	// Parse Trivy JSON output
 	var trivyReport models.TrivyReport
 	if err := json.Unmarshal(stdout.Bytes(), &trivyReport); err != nil {
 		return nil, fmt.Errorf("failed to parse Trivy output: %w, raw: %s", err, stdout.String())
 	}
 
-	// Convert to our ScanResult model
 	result := &models.ScanResult{
 		Digest:    digest,
 		ImageName: name,
@@ -356,12 +321,9 @@ func (s *ScanService) executeScan(name, ref, digest string) (*models.ScanResult,
 	return result, nil
 }
 
-// evaluatePolicy checks scan results against configured policy thresholds
-// A threshold of 0 means disabled (no limit), except for MaxCritical where 0 means none tolerated
 func (s *ScanService) evaluatePolicy(result *models.ScanResult) string {
 	policy := s.config.Trivy.Policy
 
-	// Check exempt images
 	for _, exempt := range policy.ExemptImages {
 		if strings.HasPrefix(result.ImageName, exempt) {
 			return "approved"
@@ -370,15 +332,12 @@ func (s *ScanService) evaluatePolicy(result *models.ScanResult) string {
 
 	total := result.Critical + result.High + result.Medium + result.Low
 
-	// MaxCritical: 0 means no criticals tolerated, >0 means that many allowed
 	if result.Critical > policy.MaxCritical {
 		return "pending"
 	}
-	// MaxHigh: 0 means disabled (no limit), >0 means that many allowed
 	if policy.MaxHigh > 0 && result.High > policy.MaxHigh {
 		return "pending"
 	}
-	// MaxTotal: 0 means disabled (no limit), >0 means that many allowed
 	if policy.MaxTotal > 0 && total > policy.MaxTotal {
 		return "pending"
 	}
@@ -389,7 +348,7 @@ func (s *ScanService) evaluatePolicy(result *models.ScanResult) string {
 // GetScanResult returns the scan result for a given digest
 func (s *ScanService) GetScanResult(digest string) (*models.ScanResult, error) {
 	path := s.scanResultPath(digest)
-	data, err := os.ReadFile(path)
+	data, err := s.backend.Read(path)
 	if err != nil {
 		return nil, err
 	}
@@ -401,14 +360,13 @@ func (s *ScanService) GetScanResult(digest string) (*models.ScanResult, error) {
 	return &result, nil
 }
 
-// saveScanResult writes a scan result to disk atomically
 func (s *ScanService) saveScanResult(result *models.ScanResult) error {
 	path := s.scanResultPath(result.Digest)
 	data, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
 		return err
 	}
-	return utils.AtomicWriteFile(path, data, 0644)
+	return s.backend.Write(path, data)
 }
 
 // GetDecision returns the security gate decision for a given digest
@@ -423,9 +381,7 @@ func (s *ScanService) GetDecision(digest string) (*models.ScanDecision, error) {
 
 	for _, d := range decisions {
 		if d.Digest == digest {
-			// Check expiry
 			if d.ExpiresAt != nil && time.Now().After(*d.ExpiresAt) {
-				// Expired — treat as pending
 				expired := d
 				expired.Status = "pending"
 				expired.Reason = "Approval expired, awaiting re-review"
@@ -445,10 +401,11 @@ func (s *ScanService) SetDecision(digest, status, reason, decidedBy string, expi
 
 	decisions, err := s.loadDecisions()
 	if err != nil && !os.IsNotExist(err) {
-		return err
+		if !strings.Contains(err.Error(), "not found") && !strings.Contains(err.Error(), "NoSuchKey") {
+			return err
+		}
 	}
 
-	// Load scan result to attach image info
 	scanResult, _ := s.GetScanResult(digest)
 
 	decision := models.ScanDecision{
@@ -470,7 +427,6 @@ func (s *ScanService) SetDecision(digest, status, reason, decidedBy string, expi
 		decision.ExpiresAt = &expires
 	}
 
-	// Update or append
 	found := false
 	for i, d := range decisions {
 		if d.Digest == digest {
@@ -493,7 +449,7 @@ func (s *ScanService) ListPendingDecisions() ([]models.ScanDecision, error) {
 
 	decisions, err := s.loadDecisions()
 	if err != nil {
-		if os.IsNotExist(err) {
+		if os.IsNotExist(err) || strings.Contains(err.Error(), "not found") {
 			return []models.ScanDecision{}, nil
 		}
 		return nil, err
@@ -521,7 +477,7 @@ func (s *ScanService) ListAllDecisions() ([]models.ScanDecision, error) {
 
 	decisions, err := s.loadDecisions()
 	if err != nil {
-		if os.IsNotExist(err) {
+		if os.IsNotExist(err) || strings.Contains(err.Error(), "not found") {
 			return []models.ScanDecision{}, nil
 		}
 		return nil, err
@@ -553,7 +509,7 @@ func (s *ScanService) DeleteDecision(digest string) error {
 func (s *ScanService) GetSummary() (*models.ScanSummary, error) {
 	decisions, err := s.loadDecisions()
 	if err != nil {
-		if os.IsNotExist(err) {
+		if os.IsNotExist(err) || strings.Contains(err.Error(), "not found") {
 			return &models.ScanSummary{}, nil
 		}
 		return nil, err
@@ -582,17 +538,16 @@ func (s *ScanService) GetSummary() (*models.ScanSummary, error) {
 // Helper methods
 
 func (s *ScanService) scanResultPath(digest string) string {
-	// Sanitize digest for filesystem
 	safe := strings.ReplaceAll(digest, ":", "-")
-	return filepath.Join(s.config.Storage.Path, "scan-results", safe+".json")
+	return filepath.Join("scan-results", safe+".json")
 }
 
 func (s *ScanService) decisionsPath() string {
-	return filepath.Join(s.config.Storage.Path, "scan-decisions", "decisions.json")
+	return filepath.Join("scan-decisions", "decisions.json")
 }
 
 func (s *ScanService) loadDecisions() ([]models.ScanDecision, error) {
-	data, err := os.ReadFile(s.decisionsPath())
+	data, err := s.backend.Read(s.decisionsPath())
 	if err != nil {
 		return nil, err
 	}
@@ -609,5 +564,5 @@ func (s *ScanService) saveDecisions(decisions []models.ScanDecision) error {
 	if err != nil {
 		return err
 	}
-	return utils.AtomicWriteFile(s.decisionsPath(), data, 0644)
+	return s.backend.Write(s.decisionsPath(), data)
 }

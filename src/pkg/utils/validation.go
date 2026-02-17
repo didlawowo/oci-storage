@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"regexp"
 )
 
@@ -141,44 +140,6 @@ func ValidateManifestContent(manifest map[string]interface{}) error {
 		if _, hasDigest := cfgMap["digest"]; !hasDigest {
 			return fmt.Errorf("MANIFEST_INVALID: config.digest is required")
 		}
-	}
-
-	return nil
-}
-
-// AtomicWriteFile writes data to a file atomically by writing to a temp file
-// first and then renaming. This prevents corruption from concurrent reads
-// during write, crashes, or power loss.
-func AtomicWriteFile(path string, data []byte, perm os.FileMode) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("failed to create directory: %w", err)
-	}
-
-	tmp, err := os.CreateTemp(dir, ".tmp-*")
-	if err != nil {
-		return fmt.Errorf("failed to create temp file: %w", err)
-	}
-	tmpPath := tmp.Name()
-
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		os.Remove(tmpPath)
-		return fmt.Errorf("failed to write temp file: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(tmpPath)
-		return fmt.Errorf("failed to close temp file: %w", err)
-	}
-
-	if err := os.Chmod(tmpPath, perm); err != nil {
-		os.Remove(tmpPath)
-		return fmt.Errorf("failed to set file permissions: %w", err)
-	}
-
-	if err := os.Rename(tmpPath, path); err != nil {
-		os.Remove(tmpPath)
-		return fmt.Errorf("failed to rename temp file: %w", err)
 	}
 
 	return nil

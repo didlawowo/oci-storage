@@ -3,7 +3,6 @@ package service
 
 import (
 	"encoding/json"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -11,6 +10,7 @@ import (
 
 	"oci-storage/config"
 	"oci-storage/pkg/models"
+	"oci-storage/pkg/storage"
 	"oci-storage/pkg/utils"
 
 	"github.com/sirupsen/logrus"
@@ -31,6 +31,7 @@ type GCResult struct {
 type GCService struct {
 	config       *config.Config
 	pathManager  *utils.PathManager
+	backend      storage.Backend
 	proxyService *ProxyService
 	log          *utils.Logger
 	mu           sync.Mutex
@@ -38,23 +39,22 @@ type GCService struct {
 }
 
 // NewGCService creates a new garbage collection service
-func NewGCService(cfg *config.Config, pathManager *utils.PathManager, proxyService *ProxyService, log *utils.Logger) *GCService {
+func NewGCService(cfg *config.Config, pathManager *utils.PathManager, backend storage.Backend, proxyService *ProxyService, log *utils.Logger) *GCService {
 	return &GCService{
 		config:       cfg,
 		pathManager:  pathManager,
+		backend:      backend,
 		proxyService: proxyService,
 		log:          log,
 	}
 }
 
 // Run executes a full garbage collection cycle
-// - Deletes orphan blobs (not referenced by any manifest)
-// - Deletes proxy images not accessed in the last 30 days
 func (gc *GCService) Run(dryRun bool) (*GCResult, error) {
 	gc.mu.Lock()
 	if gc.running {
 		gc.mu.Unlock()
-		return nil, nil // Already running
+		return nil, nil
 	}
 	gc.running = true
 	gc.mu.Unlock()
@@ -70,7 +70,7 @@ func (gc *GCService) Run(dryRun bool) (*GCResult, error) {
 
 	gc.log.WithField("dryRun", dryRun).Info("Starting garbage collection")
 
-	// Phase 1: Clean stale proxy images (not accessed in 30 days)
+	// Phase 1: Clean stale proxy images
 	staleResult, err := gc.cleanStaleProxyImages(dryRun)
 	if err != nil {
 		result.Errors = append(result.Errors, "stale images: "+err.Error())
@@ -79,7 +79,7 @@ func (gc *GCService) Run(dryRun bool) (*GCResult, error) {
 		result.StaleImagesBytes = staleResult.bytes
 	}
 
-	// Phase 2: Clean orphan blobs (after stale images are deleted)
+	// Phase 2: Clean orphan blobs
 	orphanResult, err := gc.cleanOrphanBlobs(dryRun)
 	if err != nil {
 		result.Errors = append(result.Errors, "orphan blobs: "+err.Error())
@@ -107,7 +107,6 @@ type cleanResult struct {
 	bytes   int64
 }
 
-// cleanStaleProxyImages removes proxy images not accessed in the last 30 days
 func (gc *GCService) cleanStaleProxyImages(dryRun bool) (*cleanResult, error) {
 	result := &cleanResult{}
 	cutoff := time.Now().AddDate(0, -1, 0) // 30 days ago
@@ -120,12 +119,10 @@ func (gc *GCService) cleanStaleProxyImages(dryRun bool) (*cleanResult, error) {
 	}
 
 	for _, img := range images {
-		// Only process proxy images
 		if !strings.HasPrefix(img.Name, "proxy/") {
 			continue
 		}
 
-		// Check if last accessed is before cutoff
 		if img.LastAccessed.Before(cutoff) {
 			gc.log.WithFields(logrus.Fields{
 				"image":        img.Name,
@@ -149,69 +146,50 @@ func (gc *GCService) cleanStaleProxyImages(dryRun bool) (*cleanResult, error) {
 	return result, nil
 }
 
-// cleanOrphanBlobs removes blobs not referenced by any manifest
 func (gc *GCService) cleanOrphanBlobs(dryRun bool) (*cleanResult, error) {
 	result := &cleanResult{}
 
-	// Step 1: Collect all referenced digests from manifests
+	// Collect all referenced digests from manifests
 	referencedDigests := make(map[string]bool)
 
-	basePath := gc.pathManager.GetBasePath()
-
 	// Scan image manifests
-	imagesDir := filepath.Join(basePath, "images")
-	if err := gc.collectReferencedDigests(imagesDir, referencedDigests); err != nil {
-		gc.log.WithError(err).Warn("Failed to scan images directory")
-	}
+	gc.collectReferencedDigests("images", referencedDigests)
 
 	// Scan chart manifests
-	manifestsDir := filepath.Join(basePath, "manifests")
-	if err := gc.collectReferencedDigests(manifestsDir, referencedDigests); err != nil {
-		gc.log.WithError(err).Warn("Failed to scan manifests directory")
-	}
+	gc.collectReferencedDigests("manifests", referencedDigests)
 
 	gc.log.WithField("referencedCount", len(referencedDigests)).Debug("Collected referenced digests")
 
-	// Step 2: Scan blobs directory and find orphans
-	blobsDir := filepath.Join(basePath, "blobs")
-	entries, err := os.ReadDir(blobsDir)
+	// Scan blobs directory and find orphans
+	entries, err := gc.backend.List("blobs")
 	if err != nil {
-		if os.IsNotExist(err) {
-			return result, nil
-		}
-		return result, err
+		return result, nil
 	}
 
 	for _, entry := range entries {
-		if entry.IsDir() {
+		if entry.IsDir {
 			continue
 		}
 
-		blobName := entry.Name()
-		// Blob files are named by their digest (sha256:xxx or just the hash)
+		blobName := entry.Name
 		digest := blobName
 		if !strings.HasPrefix(digest, "sha256:") {
 			digest = "sha256:" + digest
 		}
 
 		if !referencedDigests[digest] && !referencedDigests[blobName] {
-			blobPath := filepath.Join(blobsDir, blobName)
-			info, err := entry.Info()
-			if err != nil {
-				continue
-			}
-
 			gc.log.WithFields(logrus.Fields{
 				"blob":   blobName,
-				"size":   info.Size(),
+				"size":   entry.Size,
 				"dryRun": dryRun,
 			}).Info("Found orphan blob")
 
 			result.deleted++
-			result.bytes += info.Size()
+			result.bytes += entry.Size
 
 			if !dryRun {
-				if err := os.Remove(blobPath); err != nil {
+				blobPath := filepath.Join("blobs", blobName)
+				if err := gc.backend.Delete(blobPath); err != nil {
 					gc.log.WithError(err).WithField("blob", blobName).Warn("Failed to delete orphan blob")
 				}
 			}
@@ -222,22 +200,34 @@ func (gc *GCService) cleanOrphanBlobs(dryRun bool) (*cleanResult, error) {
 }
 
 // collectReferencedDigests walks a directory tree and extracts digests from manifests
-func (gc *GCService) collectReferencedDigests(dir string, digests map[string]bool) error {
-	return filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+func (gc *GCService) collectReferencedDigests(dir string, digests map[string]bool) {
+	gc.walkAndCollectDigests(dir, digests)
+}
+
+// walkAndCollectDigests recursively walks directories via Backend.List and extracts digests from JSON manifests
+func (gc *GCService) walkAndCollectDigests(dir string, digests map[string]bool) {
+	entries, err := gc.backend.List(dir)
+	if err != nil {
+		return
+	}
+
+	for _, entry := range entries {
+		fullPath := filepath.Join(dir, entry.Name)
+
+		if entry.IsDir {
+			gc.walkAndCollectDigests(fullPath, digests)
+			continue
+		}
+
+		if !strings.HasSuffix(entry.Name, ".json") {
+			continue
+		}
+
+		data, err := gc.backend.Read(fullPath)
 		if err != nil {
-			return nil // Skip errors
+			continue
 		}
 
-		if d.IsDir() || !strings.HasSuffix(path, ".json") {
-			return nil
-		}
-
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return nil
-		}
-
-		// Try to parse as OCI/Docker manifest
 		var manifest struct {
 			Config struct {
 				Digest string `json:"digest"`
@@ -251,17 +241,14 @@ func (gc *GCService) collectReferencedDigests(dir string, digests map[string]boo
 		}
 
 		if err := json.Unmarshal(data, &manifest); err != nil {
-			return nil
+			continue
 		}
 
-		// Add config digest
 		if manifest.Config.Digest != "" {
 			digests[manifest.Config.Digest] = true
-			// Also add without sha256: prefix for matching
 			digests[strings.TrimPrefix(manifest.Config.Digest, "sha256:")] = true
 		}
 
-		// Add layer digests
 		for _, layer := range manifest.Layers {
 			if layer.Digest != "" {
 				digests[layer.Digest] = true
@@ -269,32 +256,25 @@ func (gc *GCService) collectReferencedDigests(dir string, digests map[string]boo
 			}
 		}
 
-		// Add manifest list digests (for multi-arch images)
 		for _, m := range manifest.Manifests {
 			if m.Digest != "" {
 				digests[m.Digest] = true
 				digests[strings.TrimPrefix(m.Digest, "sha256:")] = true
 			}
 		}
-
-		return nil
-	})
+	}
 }
 
 // GetStats returns current storage statistics
 func (gc *GCService) GetStats() (*models.StorageStats, error) {
-	basePath := gc.pathManager.GetBasePath()
 	stats := &models.StorageStats{}
 
 	// Count blobs
-	blobsDir := filepath.Join(basePath, "blobs")
-	if entries, err := os.ReadDir(blobsDir); err == nil {
+	if entries, err := gc.backend.List("blobs"); err == nil {
 		for _, e := range entries {
-			if !e.IsDir() {
+			if !e.IsDir {
 				stats.BlobCount++
-				if info, err := e.Info(); err == nil {
-					stats.BlobsSize += info.Size()
-				}
+				stats.BlobsSize += e.Size
 			}
 		}
 	}
@@ -308,14 +288,11 @@ func (gc *GCService) GetStats() (*models.StorageStats, error) {
 	}
 
 	// Count charts
-	chartsDir := filepath.Join(basePath, "charts")
-	if entries, err := os.ReadDir(chartsDir); err == nil {
+	if entries, err := gc.backend.List("charts"); err == nil {
 		for _, e := range entries {
-			if !e.IsDir() && strings.HasSuffix(e.Name(), ".tgz") {
+			if !e.IsDir && strings.HasSuffix(e.Name, ".tgz") {
 				stats.ChartCount++
-				if info, err := e.Info(); err == nil {
-					stats.ChartsSize += info.Size()
-				}
+				stats.ChartsSize += e.Size
 			}
 		}
 	}

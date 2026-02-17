@@ -51,6 +51,16 @@ type Backend interface {
 	// The caller must call Close() and then use Rename() to move it.
 	// On S3 backend, this falls back to local temp then upload on Rename.
 	CreateTemp(dir string) (TempFile, error)
+
+	// Import moves a local file into storage. localPath is an absolute
+	// filesystem path (e.g. a temp upload file). storagePath is a relative
+	// path within the backend.
+	// For local backend this is an efficient os.Rename.
+	// For S3 backend this uploads the file then deletes the local copy.
+	Import(localPath, storagePath string) error
+
+	// RemoveAll removes a directory/prefix and all its contents.
+	RemoveAll(path string) error
 }
 
 // TempFile wraps a temporary file for chunked uploads.
