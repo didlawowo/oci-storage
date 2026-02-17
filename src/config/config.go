@@ -94,6 +94,25 @@ type TrivyConfig struct {
 	Policy    TrivyPolicyConfig `yaml:"policy"`
 }
 
+// S3Config defines S3-compatible object storage settings (works with AWS S3, Garage, MinIO)
+type S3Config struct {
+	Enabled   bool   `yaml:"enabled"`
+	Endpoint  string `yaml:"endpoint"`  // e.g. "http://garage.garage.svc:3900"
+	Region    string `yaml:"region"`    // e.g. "garage" or "us-east-1"
+	Bucket    string `yaml:"bucket"`    // e.g. "oci-storage"
+	AccessKey string `yaml:"accessKey"` // overridable via S3_ACCESS_KEY env
+	SecretKey string `yaml:"secretKey"` // overridable via S3_SECRET_KEY env
+	PathStyle bool   `yaml:"pathStyle"` // true for Garage/MinIO, false for AWS
+}
+
+// RedisConfig defines Redis connection settings for shared state across replicas
+type RedisConfig struct {
+	Enabled  bool   `yaml:"enabled"`
+	Addr     string `yaml:"addr"`     // e.g. "redis.redis.svc:6379"
+	Password string `yaml:"password"` // overridable via REDIS_PASSWORD env
+	DB       int    `yaml:"db"`
+}
+
 type Config struct {
 	Server struct {
 		Port int `yaml:"port"`
@@ -111,6 +130,8 @@ type Config struct {
 	Backup Backup      `yaml:"backup"`
 	Proxy  ProxyConfig `yaml:"proxy"`
 	Trivy  TrivyConfig `yaml:"trivy"`
+	S3     S3Config    `yaml:"s3"`
+	Redis  RedisConfig `yaml:"redis"`
 }
 
 type Secrets struct {
@@ -242,6 +263,45 @@ func loadConfigFromEnv(config *Config) {
 	if v := os.Getenv("PROXY_TIMEOUT_MAX_MINUTES"); v != "" {
 		if val, err := strconv.Atoi(v); err == nil {
 			config.Proxy.Timeout.MaxTimeoutMinutes = val
+		}
+	}
+
+	// S3 config from environment
+	if v := os.Getenv("S3_ENABLED"); v != "" {
+		config.S3.Enabled = v == "true"
+	}
+	if v := os.Getenv("S3_ENDPOINT"); v != "" {
+		config.S3.Endpoint = v
+	}
+	if v := os.Getenv("S3_REGION"); v != "" {
+		config.S3.Region = v
+	}
+	if v := os.Getenv("S3_BUCKET"); v != "" {
+		config.S3.Bucket = v
+	}
+	if v := os.Getenv("S3_ACCESS_KEY"); v != "" {
+		config.S3.AccessKey = v
+	}
+	if v := os.Getenv("S3_SECRET_KEY"); v != "" {
+		config.S3.SecretKey = v
+	}
+	if v := os.Getenv("S3_PATH_STYLE"); v != "" {
+		config.S3.PathStyle = v == "true"
+	}
+
+	// Redis config from environment
+	if v := os.Getenv("REDIS_ENABLED"); v != "" {
+		config.Redis.Enabled = v == "true"
+	}
+	if v := os.Getenv("REDIS_ADDR"); v != "" {
+		config.Redis.Addr = v
+	}
+	if v := os.Getenv("REDIS_PASSWORD"); v != "" {
+		config.Redis.Password = v
+	}
+	if v := os.Getenv("REDIS_DB"); v != "" {
+		if db, err := strconv.Atoi(v); err == nil {
+			config.Redis.DB = db
 		}
 	}
 
