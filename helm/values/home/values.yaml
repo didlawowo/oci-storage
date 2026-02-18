@@ -33,6 +33,8 @@ config:
     port: 3030
   storage:
     path: "data"
+  auth:
+    enabled: false
   backup:
     enabled: false
     provider: "gcp" # "aws" ou "gcp"
