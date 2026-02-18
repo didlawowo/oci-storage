@@ -31,8 +31,6 @@ func setupProxyTestEnv(t *testing.T) (*fiber.App, *MockChartService, *MockImageS
 
 	backend := storage.NewLocalBackend(tempDir)
 
-	mockChartService.On("GetPathManager").Return(pathManager)
-
 	cfg := &config.Config{
 		Proxy: config.ProxyConfig{
 			Enabled: true,
@@ -56,7 +54,7 @@ func setupProxyTestEnv(t *testing.T) (*fiber.App, *MockChartService, *MockImageS
 }
 
 func TestHandleManifest_LocalFound(t *testing.T) {
-	app, mockChartService, _, mockProxyService, handler, tempDir, cleanup := setupProxyTestEnv(t)
+	app, _, _, mockProxyService, handler, tempDir, cleanup := setupProxyTestEnv(t)
 	defer cleanup()
 
 	app.Get("/v2/:name/manifests/:reference", handler.HandleManifest)
@@ -78,7 +76,7 @@ func TestHandleManifest_LocalFound(t *testing.T) {
 
 	assert.NoError(t, err)
 	assert.Equal(t, 200, resp.StatusCode)
-	mockChartService.AssertExpectations(t)
+	mockProxyService.AssertExpectations(t)
 }
 
 func TestHandleManifest_ProxyOnMiss(t *testing.T) {
