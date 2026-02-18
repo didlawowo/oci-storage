@@ -126,15 +126,18 @@ func (h *OCIHandler) GetBlob(c *fiber.Ctx) error {
 // sendBlob streams a blob from the backend to the client
 func (h *OCIHandler) sendBlob(c *fiber.Ctx, path string) error {
 	info, err := h.backend.Stat(path)
-	if err == nil {
-		c.Set("Content-Length", fmt.Sprintf("%d", info.Size))
+	if err != nil {
+		return c.SendStatus(500)
 	}
 	reader, err := h.backend.ReadStream(path)
 	if err != nil {
 		return c.SendStatus(500)
 	}
-	defer reader.Close()
-	return c.SendStream(reader)
+	c.Set("Content-Length", fmt.Sprintf("%d", info.Size))
+	// Note: Do NOT defer reader.Close() here. Fiber/fasthttp reads the stream
+	// asynchronously after the handler returns. Closing it here would cause EOF.
+	// fasthttp will close the reader when it implements io.Closer.
+	return c.SendStream(reader, int(info.Size))
 }
 
 func (h *OCIHandler) HandleCatalog(c *fiber.Ctx) error {

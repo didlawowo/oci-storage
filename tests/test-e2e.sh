@@ -188,9 +188,14 @@ test_endpoint "OCI v2 API (with auth)" "GET" "/v2/" "200"
 # ============================================
 log_section "Authentication Tests"
 
-log_subsection "Anonymous Read Access (allowed by design)"
-# GET/HEAD without auth is allowed for proxy/cache functionality
-test_endpoint "Anonymous GET /v2/ → 200 (read allowed)" "GET" "/v2/" "200" "no"
+log_subsection "Anonymous Access to /v2/ (requires auth for docker login)"
+# GET /v2/ without auth must return 401 + WWW-Authenticate header
+# This is how "docker login" works: Docker sends GET /v2/, gets 401, then re-sends with credentials
+test_endpoint "Anonymous GET /v2/ → 401 (auth challenge)" "GET" "/v2/" "401" "no"
+
+log_subsection "Anonymous Read Access (allowed for non-root OCI paths)"
+# GET/HEAD without auth on other OCI paths is allowed for proxy/cache functionality
+test_endpoint "Anonymous GET /v2/_catalog → 200 (read allowed)" "GET" "/v2/_catalog" "200" "no"
 
 log_subsection "Write Operations Require Auth"
 # POST without auth should fail

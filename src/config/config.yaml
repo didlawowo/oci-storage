@@ -15,7 +15,7 @@ backup:
   #   region: "eu-west-1"
 
 auth:
-  enabled: true # set to false to disable auth on /v2/ (or env AUTH_ENABLED=false)
+  enabled: false # set to false to disable auth on /v2/ (or env AUTH_ENABLED=false)
 
 logging:
   level: "debug"
@@ -48,13 +48,13 @@ proxy:
 s3:
   enabled: false
   endpoint: "http://garage.garage.svc:3900" # Garage/MinIO endpoint
-  region: "garage"                           # "garage" for Garage, "us-east-1" for AWS
+  region: "garage" # "garage" for Garage, "us-east-1" for AWS
   bucket: "oci-storage"
-  pathStyle: true                            # true for Garage/MinIO, false for AWS
+  pathStyle: true # true for Garage/MinIO, false for AWS
   # accessKey/secretKey: use S3_ACCESS_KEY / S3_SECRET_KEY env vars
 
-# Redis for shared state across replicas (upload sessions, distributed locks)
-# Required when running multiple replicas. Optional for single replica.
+  # Redis for shared state across replicas (upload sessions, distributed locks)
+  # Required when running multiple replicas. Optional for single replica.
 redis:
   enabled: false
   addr: "redis.redis.svc:6379"

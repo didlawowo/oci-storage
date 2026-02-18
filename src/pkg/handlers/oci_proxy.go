@@ -137,6 +137,7 @@ func (h *OCIHandler) proxyBlob(c *fiber.Ctx, name, digest string) error {
 		c.Set("Content-Type", "application/octet-stream")
 		if size > 0 {
 			c.Set("Content-Length", fmt.Sprintf("%d", size))
+			return c.SendStream(reader, int(size))
 		}
 		return c.SendStream(reader)
 	}
