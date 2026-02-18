@@ -803,6 +803,9 @@ func (h *OCIHandler) PutManifest(c *fiber.Ctx) error {
 		}
 	}
 
+	// Track artifact type across both branches for scan decision
+	artifactType := models.ArtifactTypeUnknown
+
 	if isManifestList {
 		// Handle manifest list/index - preserve raw bytes, don't re-marshal
 		h.log.WithFunc().WithFields(logrus.Fields{
@@ -828,11 +831,13 @@ func (h *OCIHandler) PutManifest(c *fiber.Ctx) error {
 				if err := h.imageService.SaveImageIndex(name, reference, manifestData, totalSize); err != nil {
 					h.log.WithFunc().WithError(err).Warn("Failed to save manifest list metadata")
 				}
+				// Detect artifact type from a child manifest to avoid scanning Helm charts
+				artifactType = h.detectIndexArtifactType(index)
 			}
 		}
 	} else {
 		// Handle single-platform manifest
-		artifactType := models.DetectArtifactType(&manifest)
+		artifactType = models.DetectArtifactType(&manifest)
 
 		h.log.WithFunc().WithFields(logrus.Fields{
 			"name":         name,
@@ -897,7 +902,7 @@ func (h *OCIHandler) PutManifest(c *fiber.Ctx) error {
 	// Only scan Docker images (not Helm charts), and only for proper tags
 	if h.scanService != nil && h.scanService.IsEnabled() &&
 		!strings.HasPrefix(reference, "sha256:") && !strings.Contains(reference, "/") {
-		if models.DetectArtifactType(&manifest) != models.ArtifactTypeHelmChart {
+		if artifactType == models.ArtifactTypeDockerImage {
 			h.scanService.ScanImage(name, reference, digestStr)
 		}
 	}
@@ -998,6 +1003,32 @@ func (h *OCIHandler) saveManifestFile(manifestPath string, data []byte) error {
 		return err
 	}
 	return nil
+}
+
+// detectIndexArtifactType determines the artifact type of a manifest list
+// by reading a child manifest and checking its config media type
+func (h *OCIHandler) detectIndexArtifactType(index models.OCIIndex) models.ArtifactType {
+	if len(index.Manifests) == 0 {
+		return models.ArtifactTypeUnknown
+	}
+
+	targetDigest := index.Manifests[0].Digest
+	if targetDigest == "" {
+		return models.ArtifactTypeUnknown
+	}
+
+	blobPath := h.pathManager.GetBlobPath(targetDigest)
+	data, err := h.backend.Read(blobPath)
+	if err != nil {
+		return models.ArtifactTypeUnknown
+	}
+
+	var childManifest models.OCIManifest
+	if err := json.Unmarshal(data, &childManifest); err != nil {
+		return models.ArtifactTypeUnknown
+	}
+
+	return models.DetectArtifactType(&childManifest)
 }
 
 // calculateManifestListSizeFromBlobs calculates the real size of a manifest list
