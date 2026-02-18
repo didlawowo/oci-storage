@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.1](https://github.com/didlawowo/oci-storage/compare/v1.4.0...v1.4.1) (2026-02-18)
+
+
+### Bug Fixes
+
+* audit - digest verification, proxy HEAD, manifest validation, atomic writes ([#39](https://github.com/didlawowo/oci-storage/issues/39)) ([6876226](https://github.com/didlawowo/oci-storage/commit/6876226782b790b11fb7ef5ac56633eb23fac1d9))
+
 ## [1.4.0](https://github.com/didlawowo/oci-storage/compare/v1.3.0...v1.4.0) (2026-02-14)
 
 
