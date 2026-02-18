@@ -13,7 +13,15 @@ spec:
     matchLabels:
       {{- include "application.selectorLabels" . | nindent 6 }}
       app.kubernetes.io/component: server
+  {{- if .Values.s3.enabled }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  {{- else }}
   strategy: {{ toYaml .Values.strategy | nindent 4 }}
+  {{- end }}
   template:
     metadata:
       labels:
@@ -28,7 +36,9 @@ spec:
         {{- end }}
     spec:
       serviceAccountName: {{  .Values.serviceAccount.name }}
+      {{- if not .Values.s3.enabled }}
       initContainers: {{- toYaml .Values.initContainers | nindent 8 }}
+      {{- end }}
       containers:
         - name: {{ default .Values.application.containerName }}
           image: {{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}
@@ -45,14 +55,61 @@ spec:
           {{- with .Values.resources }}
           resources: {{- toYaml . | nindent 12 }}
           {{- end }}
+          env:
           {{- with .Values.env }}
-          env: {{- toYaml . | nindent 12 }}
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if .Values.s3.enabled }}
+            - name: S3_ENABLED
+              value: "true"
+            - name: S3_ENDPOINT
+              value: {{ .Values.s3.endpoint | quote }}
+            - name: S3_REGION
+              value: {{ .Values.s3.region | quote }}
+            - name: S3_BUCKET
+              value: {{ .Values.s3.bucket | quote }}
+            - name: S3_PATH_STYLE
+              value: {{ .Values.s3.pathStyle | quote }}
+            {{- if .Values.s3.existingSecret }}
+            - name: S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.s3.existingSecret }}
+                  key: S3_ACCESS_KEY
+            - name: S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.s3.existingSecret }}
+                  key: S3_SECRET_KEY
+            {{- end }}
+          {{- end }}
+          {{- if .Values.redis.enabled }}
+            - name: REDIS_ENABLED
+              value: "true"
+            - name: REDIS_ADDR
+              value: {{ .Values.redis.addr | quote }}
+            - name: REDIS_DB
+              value: {{ .Values.redis.db | quote }}
+            {{- if .Values.redis.existingSecret }}
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.redis.existingSecret }}
+                  key: REDIS_PASSWORD
+            {{- end }}
           {{- end }}
           {{- with .Values.envFrom }}
           envFrom: {{- toYaml . | nindent 12 }}
           {{- end }}
-          {{- with .Values.volumeMounts }}
-          volumeMounts: {{- toYaml . | nindent 12 }}
+          volumeMounts:
+          {{- if .Values.s3.enabled }}
+            - name: config-volume
+              mountPath: /app/config
+              readOnly: true
+          {{- else }}
+            {{- with .Values.volumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           {{- end }}
           {{- with .Values.livenessProbe }}
           livenessProbe:
@@ -95,9 +152,11 @@ spec:
           resources: {{- toYaml . | nindent 12 }}
           {{- end }}
           volumeMounts:
+            {{- if not .Values.s3.enabled }}
             - name: data-volume
               mountPath: /app/data
               readOnly: true
+            {{- end }}
             {{- if .Values.trivy.dbVolume.enabled }}
             - name: trivy-db
               mountPath: /root/.cache
@@ -115,8 +174,19 @@ spec:
             initialDelaySeconds: 15
             periodSeconds: 10
         {{- end }}
-      {{- with .Values.volumes }}
-      volumes: {{- toYaml . | nindent 8 }}
+      volumes:
+        - name: config-volume
+          projected:
+            sources:
+              - configMap:
+                  name: oci-storage-config
+                  items:
+                    - key: config.yaml
+                      path: config.yaml
+      {{- if not .Values.s3.enabled }}
+        - name: data-volume
+          persistentVolumeClaim:
+            claimName: oci-storage-data
       {{- end }}
       {{- if and .Values.trivy.enabled .Values.trivy.dbVolume.enabled }}
         - name: trivy-db
@@ -132,4 +202,3 @@ spec:
       {{- with .Values.affinity }}
       affinity: {{- toYaml . | nindent 8 }}
       {{- end }}
-

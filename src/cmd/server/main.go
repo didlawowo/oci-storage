@@ -2,25 +2,72 @@ package main
 
 import (
 	"oci-storage/config"
+	"oci-storage/pkg/coordination"
 	"oci-storage/pkg/handlers"
 	"oci-storage/pkg/interfaces"
 	middleware "oci-storage/pkg/middlewares"
+	ociRedis "oci-storage/pkg/redis"
 	service "oci-storage/pkg/services"
+	"oci-storage/pkg/storage"
 	"oci-storage/pkg/utils"
 	"oci-storage/pkg/version"
+	"path/filepath"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/template/html/v2"
 	"github.com/sirupsen/logrus"
 )
 
-// setupServices initialise et configure tous les services
-func setupServices(cfg *config.Config, log *utils.Logger) (interfaces.ChartServiceInterface, interfaces.ImageServiceInterface, interfaces.IndexServiceInterface, interfaces.ProxyServiceInterface, *service.BackupService, interfaces.ScanServiceInterface) {
+// setupBackend creates the storage backend (local filesystem or S3) based on config
+func setupBackend(cfg *config.Config, log *utils.Logger) storage.Backend {
+	if cfg.S3.Enabled {
+		log.WithFields(logrus.Fields{
+			"endpoint": cfg.S3.Endpoint,
+			"bucket":   cfg.S3.Bucket,
+			"region":   cfg.S3.Region,
+		}).Info("Initializing S3 storage backend")
 
-	tmpChartService := service.NewChartService(cfg, log, nil)
-	indexService := service.NewIndexService(cfg, log, tmpChartService)
-	finalChartService := service.NewChartService(cfg, log, indexService)
-	imageService := service.NewImageService(cfg, log)
+		localTempDir := filepath.Join(cfg.Storage.Path, "temp")
+		backend, err := storage.NewS3Backend(cfg.S3, localTempDir)
+		if err != nil {
+			log.WithError(err).Fatal("Failed to initialize S3 backend")
+		}
+		return backend
+	}
+
+	log.WithField("path", cfg.Storage.Path).Info("Using local filesystem storage backend")
+	return storage.NewLocalBackend(cfg.Storage.Path)
+}
+
+// setupCoordination creates distributed coordination primitives.
+// With Redis: distributed locks + upload tracking + scan dedup across replicas.
+// Without Redis: noop implementations (single-replica mode).
+// Returns a cleanup function that must be deferred to close connections.
+func setupCoordination(cfg *config.Config, log *utils.Logger) (coordination.LockManager, coordination.UploadTracker, coordination.ScanTracker, func()) {
+	if cfg.Redis.Enabled {
+		client, err := ociRedis.NewClient(cfg.Redis, log)
+		if err != nil {
+			log.WithError(err).Fatal("Failed to connect to Redis (required for multi-replica mode)")
+		}
+		cleanup := func() {
+			log.Info("Closing Redis connection")
+			client.Close()
+		}
+		// Client implements LockManager, UploadTracker, and ScanTracker
+		return client, client, client, cleanup
+	}
+
+	log.Info("Redis disabled - running in single-replica mode (no distributed coordination)")
+	return &coordination.NoopLockManager{}, &coordination.NoopUploadTracker{}, &coordination.NoopScanTracker{}, func() {}
+}
+
+// setupServices initialise et configure tous les services
+func setupServices(cfg *config.Config, log *utils.Logger, pm *utils.PathManager, backend storage.Backend, locker coordination.LockManager, scanTracker coordination.ScanTracker) (interfaces.ChartServiceInterface, interfaces.ImageServiceInterface, interfaces.IndexServiceInterface, interfaces.ProxyServiceInterface, *service.BackupService, interfaces.ScanServiceInterface) {
+
+	tmpChartService := service.NewChartService(cfg, log, pm, backend, nil)
+	indexService := service.NewIndexService(cfg, log, pm, backend, tmpChartService, locker)
+	finalChartService := service.NewChartService(cfg, log, pm, backend, indexService)
+	imageService := service.NewImageService(cfg, log, pm, backend)
 	backupService, err := service.NewBackupService(cfg, log)
 	if err != nil {
 		log.WithFunc().WithError(err).Fatal("Failed to initialize backup service")
@@ -29,15 +76,14 @@ func setupServices(cfg *config.Config, log *utils.Logger) (interfaces.ChartServi
 	// Initialize proxy service if enabled
 	var proxyService interfaces.ProxyServiceInterface
 	if cfg.Proxy.Enabled {
-		proxyService = service.NewProxyService(cfg, log)
+		proxyService = service.NewProxyService(cfg, log, pm, backend)
 		log.Info("Proxy/cache service enabled")
 	}
 
 	// Initialize scan service if enabled
 	var scanService interfaces.ScanServiceInterface
 	if cfg.Trivy.Enabled {
-		pathManager := finalChartService.GetPathManager()
-		scanService = service.NewScanService(cfg, log, pathManager)
+		scanService = service.NewScanService(cfg, log, pm, backend, locker, scanTracker)
 		log.Info("Trivy scan service enabled")
 	}
 
@@ -52,16 +98,18 @@ func setupHandlers(
 	proxyService interfaces.ProxyServiceInterface,
 	scanService interfaces.ScanServiceInterface,
 	pathManager *utils.PathManager,
+	backend storage.Backend,
+	uploadTracker coordination.UploadTracker,
 	cfg *config.Config,
 	backupService *service.BackupService,
 	log *utils.Logger,
 
 ) (*handlers.HelmHandler, *handlers.ImageHandler, *handlers.OCIHandler, *handlers.ConfigHandler, *handlers.IndexHandler, *handlers.BackupHandler, *handlers.CacheHandler, *handlers.GCHandler, *handlers.ScanHandler) {
-	helmHandler := handlers.NewHelmHandler(chartService, pathManager, log)
+	helmHandler := handlers.NewHelmHandler(chartService, pathManager, log, backend)
 	imageHandler := handlers.NewImageHandler(imageService, proxyService, pathManager, log)
-	ociHandler := handlers.NewOCIHandler(chartService, imageService, proxyService, scanService, cfg, log)
+	ociHandler := handlers.NewOCIHandler(chartService, imageService, proxyService, scanService, cfg, log, pathManager, backend, uploadTracker)
 	configHandler := handlers.NewConfigHandler(cfg, log)
-	indexHandler := handlers.NewIndexHandler(chartService, pathManager, log)
+	indexHandler := handlers.NewIndexHandler(chartService, pathManager, log, backend)
 	backupHandler := handlers.NewBackupHandler(backupService, log, cfg)
 	cacheHandler := handlers.NewCacheHandler(proxyService, log)
 
@@ -70,7 +118,7 @@ func setupHandlers(
 	if proxyService != nil {
 		// Type assert to get concrete ProxyService
 		if ps, ok := proxyService.(*service.ProxyService); ok {
-			gcService := service.NewGCService(cfg, pathManager, ps, log)
+			gcService := service.NewGCService(cfg, pathManager, backend, ps, log)
 			gcHandler = handlers.NewGCHandler(gcService, log)
 		}
 	}
@@ -126,11 +174,18 @@ func main() {
 		log.WithError(err).Fatal("Failed to load auth configuration")
 	}
 
+	// Storage backend (local or S3)
+	backend := setupBackend(cfg, log)
+
+	// Distributed coordination (Redis or noop)
+	locker, uploadTracker, scanTracker, coordCleanup := setupCoordination(cfg, log)
+	defer coordCleanup()
+
 	// PathManager
 	pathManager := utils.NewPathManager(cfg.Storage.Path, log)
 
 	// Services
-	chartService, imageService, indexService, proxyService, backupService, scanService := setupServices(cfg, log)
+	chartService, imageService, indexService, proxyService, backupService, scanService := setupServices(cfg, log, pathManager, backend, locker, scanTracker)
 
 	// Ensure index.yaml exists at startup
 	if err := indexService.EnsureIndexExists(); err != nil {
@@ -145,6 +200,8 @@ func main() {
 		proxyService,
 		scanService,
 		pathManager,
+		backend,
+		uploadTracker,
 		cfg,
 		backupService,
 		log,
@@ -152,14 +209,14 @@ func main() {
 
 	// Fiber app configuration
 	app := fiber.New(fiber.Config{
-		AppName:       "oci storage",
-		Prefork:       false,
-		CaseSensitive: true,
-		StrictRouting: true,
-		ServerHeader:  "oci storage",
-		BodyLimit:          10 * 1024 * 1024 * 1024, // 10GB for large Docker image layers (ML models, etc.)
+		AppName:           "oci storage",
+		Prefork:           false,
+		CaseSensitive:     true,
+		StrictRouting:     true,
+		ServerHeader:      "oci storage",
+		BodyLimit:         10 * 1024 * 1024 * 1024, // 10GB for large Docker image layers (ML models, etc.)
 		StreamRequestBody: true,                     // Enable streaming for large uploads
-		Views:         html.New("./views", ".html"),
+		Views:             html.New("./views", ".html"),
 
 		ErrorHandler: func(c *fiber.Ctx, err error) error {
 			log.WithFields(logrus.Fields{
@@ -201,6 +258,9 @@ func main() {
 	})
 	// Créer le middleware d'authentification
 	authMiddleware := middleware.NewAuthMiddleware(cfg, log)
+	if !cfg.Auth.IsEnabled() {
+		log.Warn("Authentication is DISABLED - all /v2/ write operations are open")
+	}
 
 	// Appliquer le middleware aux routes OCI qui nécessitent une authentification
 	ociGroup := app.Group("/v2")

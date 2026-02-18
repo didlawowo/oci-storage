@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -17,6 +16,7 @@ import (
 
 	"oci-storage/config"
 	"oci-storage/pkg/models"
+	"oci-storage/pkg/storage"
 	"oci-storage/pkg/utils"
 
 	"github.com/sirupsen/logrus"
@@ -26,6 +26,7 @@ import (
 type ProxyService struct {
 	config      *config.Config
 	pathManager *utils.PathManager
+	backend     storage.Backend
 	log         *utils.Logger
 	httpClient  *http.Client
 	cacheMutex  sync.RWMutex
@@ -33,17 +34,23 @@ type ProxyService struct {
 }
 
 // NewProxyService creates a new proxy service
-func NewProxyService(cfg *config.Config, log *utils.Logger) *ProxyService {
-	pm := utils.NewPathManager(cfg.Storage.Path, log)
+func NewProxyService(cfg *config.Config, log *utils.Logger, pm *utils.PathManager, backend storage.Backend) *ProxyService {
+	// Configure HTTP transport with connection pooling to prevent fd exhaustion
+	transport := &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 20,
+		MaxConnsPerHost:     50,
+		IdleConnTimeout:     90 * time.Second,
+	}
 
 	svc := &ProxyService{
 		config:      cfg,
 		pathManager: pm,
+		backend:     backend,
 		log:         log,
 		httpClient: &http.Client{
-			// No global timeout - we use context timeouts per-request instead
-			// Global timeout would kill large blob downloads (5GB+ can take 10+ minutes)
-			Timeout: 0,
+			Timeout:   0,
+			Transport: transport,
 		},
 		cacheState: &models.CacheState{
 			MaxSize: int64(cfg.Proxy.Cache.MaxSizeGB) * 1024 * 1024 * 1024,
@@ -68,24 +75,15 @@ func (s *ProxyService) IsEnabled() bool {
 }
 
 // ResolveRegistry parses an image path and determines the upstream registry
-// Supports formats:
-//   - proxy/docker.io/nginx -> docker.io registry, library/nginx image
-//   - proxy/docker.io/library/nginx -> docker.io registry, library/nginx image
-//   - proxy/ghcr.io/org/image -> ghcr.io registry, org/image
-//   - docker.io/nginx -> docker.io registry, library/nginx image
-//   - nginx -> default registry, library/nginx image
 func (s *ProxyService) ResolveRegistry(imagePath string) (registryURL string, imageName string, err error) {
-	// Strip "proxy/" prefix if present
 	imagePath = strings.TrimPrefix(imagePath, "proxy/")
 
 	parts := strings.SplitN(imagePath, "/", 2)
 
-	// Check if first part matches a configured registry
 	for _, reg := range s.config.Proxy.Registries {
 		if parts[0] == reg.Name {
 			if len(parts) > 1 {
 				finalImageName := parts[1]
-				// For Docker Hub, add library/ prefix for single-segment image names
 				if reg.Name == "docker.io" && !strings.Contains(finalImageName, "/") {
 					finalImageName = "library/" + finalImageName
 				}
@@ -95,10 +93,8 @@ func (s *ProxyService) ResolveRegistry(imagePath string) (registryURL string, im
 		}
 	}
 
-	// No registry prefix found - use default
 	defaultReg := s.GetDefaultRegistry()
 
-	// Handle Docker Hub's "library/" prefix for official images
 	if !strings.Contains(imagePath, "/") {
 		imagePath = "library/" + imagePath
 	}
@@ -113,7 +109,6 @@ func (s *ProxyService) GetDefaultRegistry() string {
 			return reg.URL
 		}
 	}
-	// Fallback to Docker Hub
 	return "https://registry-1.docker.io"
 }
 
@@ -133,7 +128,6 @@ func (s *ProxyService) GetManifest(ctx context.Context, registryURL, name, refer
 		return nil, "", fmt.Errorf("failed to create request: %w", err)
 	}
 
-	// Accept multiple manifest types
 	req.Header.Set("Accept", strings.Join([]string{
 		"application/vnd.docker.distribution.manifest.v2+json",
 		"application/vnd.docker.distribution.manifest.list.v2+json",
@@ -141,7 +135,7 @@ func (s *ProxyService) GetManifest(ctx context.Context, registryURL, name, refer
 		"application/vnd.oci.image.index.v1+json",
 	}, ", "))
 
-	resp, err := s.fetchWithAuth(ctx, req, registryURL, name)
+	resp, err := s.FetchWithAuth(ctx, req, registryURL, name)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to fetch manifest: %w", err)
 	}
@@ -181,7 +175,7 @@ func (s *ProxyService) GetBlob(ctx context.Context, registryURL, name, digest st
 		return nil, 0, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	resp, err := s.fetchWithAuth(ctx, req, registryURL, name)
+	resp, err := s.FetchWithAuth(ctx, req, registryURL, name)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to fetch blob: %w", err)
 	}
@@ -194,14 +188,13 @@ func (s *ProxyService) GetBlob(ctx context.Context, registryURL, name, digest st
 	return resp.Body, resp.ContentLength, nil
 }
 
-// fetchWithAuth handles Docker registry authentication flow
-func (s *ProxyService) fetchWithAuth(ctx context.Context, req *http.Request, registryURL, name string) (*http.Response, error) {
+// FetchWithAuth handles Docker registry authentication flow
+func (s *ProxyService) FetchWithAuth(ctx context.Context, req *http.Request, registryURL, name string) (*http.Response, error) {
 	s.log.WithFields(logrus.Fields{
 		"url":    req.URL.String(),
 		"method": req.Method,
 	}).Debug("Making upstream request")
 
-	// Find registry config to get credentials
 	var regConfig *config.RegistryConfig
 	for i := range s.config.Proxy.Registries {
 		if s.config.Proxy.Registries[i].URL == registryURL {
@@ -218,7 +211,6 @@ func (s *ProxyService) fetchWithAuth(ctx context.Context, req *http.Request, reg
 
 	s.log.WithField("status", resp.StatusCode).Debug("Upstream response received")
 
-	// Handle 401 - need to get token
 	if resp.StatusCode == http.StatusUnauthorized {
 		resp.Body.Close()
 		s.log.Debug("Got 401, fetching auth token...")
@@ -230,7 +222,6 @@ func (s *ProxyService) fetchWithAuth(ctx context.Context, req *http.Request, reg
 		}
 
 		s.log.Debug("Token obtained, retrying request with auth")
-		// Retry with token
 		req.Header.Set("Authorization", "Bearer "+token)
 		return s.httpClient.Do(req)
 	}
@@ -238,16 +229,13 @@ func (s *ProxyService) fetchWithAuth(ctx context.Context, req *http.Request, reg
 	return resp, nil
 }
 
-// getToken parses WWW-Authenticate and fetches token (with optional credentials)
 func (s *ProxyService) getToken(ctx context.Context, wwwAuth, name string, regConfig *config.RegistryConfig) (string, error) {
-	// Parse: Bearer realm="https://auth.docker.io/token",service="registry.docker.io",scope="repository:library/alpine:pull"
 	params := s.parseWwwAuthenticate(wwwAuth)
 
 	realm := params["realm"]
 	service := params["service"]
 	scope := params["scope"]
 
-	// If scope is not provided in header, construct it
 	if scope == "" {
 		scope = fmt.Sprintf("repository:%s:pull", name)
 	}
@@ -264,7 +252,6 @@ func (s *ProxyService) getToken(ctx context.Context, wwwAuth, name string, regCo
 		return "", err
 	}
 
-	// Add Basic Auth if credentials are configured for this registry
 	if regConfig != nil && regConfig.Username != "" && regConfig.Password != "" {
 		req.SetBasicAuth(regConfig.Username, regConfig.Password)
 		s.log.WithField("username", regConfig.Username).Debug("Using credentials for token request")
@@ -288,21 +275,16 @@ func (s *ProxyService) getToken(ctx context.Context, wwwAuth, name string, regCo
 		return "", err
 	}
 
-	// Some registries use "token", others use "access_token"
 	if tokenResp.Token != "" {
 		return tokenResp.Token, nil
 	}
 	return tokenResp.AccessToken, nil
 }
 
-// parseWwwAuthenticate parses WWW-Authenticate header
 func (s *ProxyService) parseWwwAuthenticate(header string) map[string]string {
 	params := make(map[string]string)
-
-	// Remove "Bearer " prefix
 	header = strings.TrimPrefix(header, "Bearer ")
 
-	// Parse key="value" pairs
 	re := regexp.MustCompile(`(\w+)="([^"]*)"`)
 	matches := re.FindAllStringSubmatch(header, -1)
 
@@ -340,45 +322,42 @@ func (s *ProxyService) GetCacheState() *models.CacheState {
 	return state
 }
 
-// GetCachedImages returns all cached images metadata by scanning the filesystem
-// This ensures consistency - the filesystem is the single source of truth
+// GetCachedImages returns all cached images metadata by scanning the storage
 func (s *ProxyService) GetCachedImages() ([]models.CachedImageMetadata, error) {
-	metadataDir := filepath.Join(s.pathManager.GetBasePath(), "cache", "metadata")
+	metadataDir := filepath.Join("cache", "metadata")
 
-	// Ensure directory exists
-	if _, err := os.Stat(metadataDir); os.IsNotExist(err) {
+	exists, _ := s.backend.Exists(metadataDir)
+	if !exists {
 		return []models.CachedImageMetadata{}, nil
 	}
 
-	files, err := os.ReadDir(metadataDir)
+	files, err := s.backend.List(metadataDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read cache metadata directory: %w", err)
 	}
 
 	var images []models.CachedImageMetadata
 	for _, file := range files {
-		if file.IsDir() || !strings.HasSuffix(file.Name(), ".json") {
+		if file.IsDir || !strings.HasSuffix(file.Name, ".json") {
 			continue
 		}
 
-		filePath := filepath.Join(metadataDir, file.Name())
-		data, err := os.ReadFile(filePath)
+		filePath := filepath.Join(metadataDir, file.Name)
+		data, err := s.backend.Read(filePath)
 		if err != nil {
-			s.log.WithError(err).WithField("file", file.Name()).Warn("Failed to read cache metadata file")
+			s.log.WithError(err).WithField("file", file.Name).Warn("Failed to read cache metadata file")
 			continue
 		}
 
 		var metadata models.CachedImageMetadata
 		if err := json.Unmarshal(data, &metadata); err != nil {
-			s.log.WithError(err).WithField("file", file.Name()).Warn("Failed to parse cache metadata file")
+			s.log.WithError(err).WithField("file", file.Name).Warn("Failed to parse cache metadata file")
 			continue
 		}
 
-		// Skip entries with invalid/corrupted tags (digest fragments, etc)
-		// Valid tags should not contain ":" (digest fragments like "56:1" or "sha256:...")
 		if strings.Contains(metadata.Tag, ":") || len(metadata.Tag) < 2 {
 			s.log.WithFields(logrus.Fields{
-				"file": file.Name(),
+				"file": file.Name,
 				"tag":  metadata.Tag,
 			}).Debug("Skipping corrupted cache entry")
 			continue
@@ -403,16 +382,11 @@ func (s *ProxyService) UpdateAccessTime(name, tag string) {
 		}
 	}
 
-	// Persist asynchronously
 	go s.saveCacheState()
 }
 
 // AddToCache adds image metadata to the cache tracking
-// Each image is stored as an individual file for consistency
 func (s *ProxyService) AddToCache(metadata models.CachedImageMetadata) error {
-	// Skip invalid or digest-like references - only cache actual tags
-	// Valid tags: latest, v1.0, alpine, 3.12-alpine, etc.
-	// Invalid: sha256:..., sha2, :abc, manifest fragments, etc.
 	tag := metadata.Tag
 	if strings.HasPrefix(tag, "sha") ||
 		strings.HasPrefix(tag, ":") ||
@@ -428,17 +402,12 @@ func (s *ProxyService) AddToCache(metadata models.CachedImageMetadata) error {
 
 	metadataPath := s.pathManager.GetCachedImageMetadataPath(metadata.Name, metadata.Tag)
 
-	// Ensure directory exists
-	if err := os.MkdirAll(filepath.Dir(metadataPath), 0755); err != nil {
-		return fmt.Errorf("failed to create cache metadata directory: %w", err)
-	}
-
 	data, err := json.MarshalIndent(metadata, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal cache metadata: %w", err)
 	}
 
-	if err := os.WriteFile(metadataPath, data, 0644); err != nil {
+	if err := s.backend.Write(metadataPath, data); err != nil {
 		return fmt.Errorf("failed to write cache metadata: %w", err)
 	}
 
@@ -448,13 +417,11 @@ func (s *ProxyService) AddToCache(metadata models.CachedImageMetadata) error {
 		"path": metadataPath,
 	}).Debug("Cache metadata saved")
 
-	// Check if we need to evict (recalculate total size)
 	s.checkAndEvictIfNeeded()
 
 	return nil
 }
 
-// checkAndEvictIfNeeded calculates total cache size and evicts if over limit
 func (s *ProxyService) checkAndEvictIfNeeded() {
 	images, err := s.GetCachedImages()
 	if err != nil {
@@ -474,12 +441,11 @@ func (s *ProxyService) checkAndEvictIfNeeded() {
 			"maxSize":   maxSize,
 		}).Info("Cache over limit, triggering eviction")
 
-		// Sort by last accessed and evict oldest
 		sort.Slice(images, func(i, j int) bool {
 			return images[i].LastAccessed.Before(images[j].LastAccessed)
 		})
 
-		targetSize := maxSize * 90 / 100 // Evict to 90% capacity
+		targetSize := maxSize * 90 / 100
 		for _, img := range images {
 			if totalSize <= targetSize {
 				break
@@ -495,9 +461,8 @@ func (s *ProxyService) checkAndEvictIfNeeded() {
 				s.log.WithError(err).Warn("Failed to delete cached image files during eviction")
 			}
 
-			// Delete metadata file
 			metadataPath := s.pathManager.GetCachedImageMetadataPath(img.Name, img.Tag)
-			os.Remove(metadataPath)
+			s.backend.Delete(metadataPath)
 
 			totalSize -= img.Size
 		}
@@ -512,18 +477,15 @@ func (s *ProxyService) EvictLRU(targetBytes int64) error {
 	return s.evictLRUInternal(targetBytes)
 }
 
-// evictLRUInternal performs LRU eviction (caller must hold lock)
 func (s *ProxyService) evictLRUInternal(targetBytes int64) error {
 	if s.cacheState.TotalSize <= targetBytes {
-		return nil // Already under limit
+		return nil
 	}
 
-	// Sort by last accessed (oldest first)
 	sort.Slice(s.cacheState.Images, func(i, j int) bool {
 		return s.cacheState.Images[i].LastAccessed.Before(s.cacheState.Images[j].LastAccessed)
 	})
 
-	// Evict until under limit
 	for s.cacheState.TotalSize > targetBytes && len(s.cacheState.Images) > 0 {
 		oldest := s.cacheState.Images[0]
 
@@ -534,12 +496,10 @@ func (s *ProxyService) evictLRUInternal(targetBytes int64) error {
 			"size":         oldest.Size,
 		}).Info("Evicting cached image (LRU)")
 
-		// Delete files
 		if err := s.deleteCachedImageFiles(oldest.Name, oldest.Tag); err != nil {
 			s.log.WithError(err).Warn("Failed to delete cached image files")
 		}
 
-		// Update state
 		s.cacheState.TotalSize -= oldest.Size
 		s.cacheState.Images = s.cacheState.Images[1:]
 		s.cacheState.ItemCount--
@@ -550,13 +510,11 @@ func (s *ProxyService) evictLRUInternal(targetBytes int64) error {
 
 // DeleteCachedImage removes a specific cached image
 func (s *ProxyService) DeleteCachedImage(name, tag string) error {
-	// Delete the cache metadata file (source of truth)
 	metadataPath := s.pathManager.GetCachedImageMetadataPath(name, tag)
-	if err := os.Remove(metadataPath); err != nil && !os.IsNotExist(err) {
+	if err := s.backend.Delete(metadataPath); err != nil {
 		s.log.WithError(err).WithField("path", metadataPath).Warn("Failed to delete cache metadata file")
 	}
 
-	// Delete image files (manifests, tags)
 	s.deleteCachedImageFiles(name, tag)
 
 	s.log.WithField("name", name).WithField("tag", tag).Info("Cached image deleted")
@@ -565,59 +523,29 @@ func (s *ProxyService) DeleteCachedImage(name, tag string) error {
 
 // deleteCachedImageFiles removes the files for a cached image
 func (s *ProxyService) deleteCachedImageFiles(name, tag string) error {
-	basePath := s.pathManager.GetBasePath()
-
 	// Delete cache metadata
 	metadataPath := s.pathManager.GetCachedImageMetadataPath(name, tag)
-	if err := os.Remove(metadataPath); err != nil && !os.IsNotExist(err) {
+	if err := s.backend.Delete(metadataPath); err != nil {
 		s.log.WithError(err).Warn("Failed to delete cache metadata file")
 	}
 
-	// Delete image manifest (in manifests/ directory)
-	manifestPath := filepath.Join(basePath, "images", name, "manifests", tag+".json")
-	if err := os.Remove(manifestPath); err != nil && !os.IsNotExist(err) {
+	// Delete image manifest
+	manifestPath := filepath.Join("images", name, "manifests", tag+".json")
+	if err := s.backend.Delete(manifestPath); err != nil {
 		s.log.WithError(err).Debug("Failed to delete manifest file")
 	} else {
 		s.log.WithField("path", manifestPath).Debug("Deleted manifest file")
 	}
 
-	// Delete image tag metadata (in tags/ directory)
-	tagMetadataPath := filepath.Join(basePath, "images", name, "tags", tag+".json")
-	if err := os.Remove(tagMetadataPath); err != nil && !os.IsNotExist(err) {
+	// Delete image tag metadata
+	tagMetadataPath := filepath.Join("images", name, "tags", tag+".json")
+	if err := s.backend.Delete(tagMetadataPath); err != nil {
 		s.log.WithError(err).Debug("Failed to delete tag metadata file")
 	} else {
 		s.log.WithField("path", tagMetadataPath).Debug("Deleted tag metadata file")
 	}
 
-	// Clean up empty directories (tags, manifests, then image dir)
-	tagsDir := filepath.Join(basePath, "images", name, "tags")
-	manifestsDir := filepath.Join(basePath, "images", name, "manifests")
-	imageDir := filepath.Join(basePath, "images", name)
-
-	s.cleanEmptyDirs(tagsDir)
-	s.cleanEmptyDirs(manifestsDir)
-	s.cleanEmptyDirs(imageDir)
-
-	// Note: We don't delete blobs as they might be shared with other images
-	// A garbage collection process could be added later
-
 	return nil
-}
-
-// cleanEmptyDirs removes empty directories recursively up to images/
-func (s *ProxyService) cleanEmptyDirs(dir string) {
-	imagesBase := s.pathManager.GetBasePath() + "/images"
-
-	for dir != imagesBase && dir != "" {
-		entries, err := os.ReadDir(dir)
-		if err != nil || len(entries) > 0 {
-			break
-		}
-		if err := os.Remove(dir); err != nil {
-			break
-		}
-		dir = filepath.Dir(dir)
-	}
 }
 
 // PurgeAllCache removes all cached images and blobs completely
@@ -628,33 +556,18 @@ func (s *ProxyService) PurgeAllCache() error {
 	s.log.Info("Purging all cache data")
 
 	// Delete all blobs
-	blobsDir := s.pathManager.GetBasePath() + "/blobs"
-	if err := os.RemoveAll(blobsDir); err != nil && !os.IsNotExist(err) {
+	if err := s.backend.RemoveAll("blobs"); err != nil {
 		s.log.WithError(err).Warn("Failed to delete blobs directory")
 	}
-	// Recreate empty blobs directory
-	if err := os.MkdirAll(blobsDir, 0755); err != nil {
-		s.log.WithError(err).Warn("Failed to recreate blobs directory")
-	}
 
-	// Delete all images directory (manifests and tags metadata)
-	imagesDir := s.pathManager.GetBasePath() + "/images"
-	if err := os.RemoveAll(imagesDir); err != nil && !os.IsNotExist(err) {
+	// Delete all images directory
+	if err := s.backend.RemoveAll("images"); err != nil {
 		s.log.WithError(err).Warn("Failed to delete images directory")
-	}
-	// Recreate empty images directory
-	if err := os.MkdirAll(imagesDir, 0755); err != nil {
-		s.log.WithError(err).Warn("Failed to recreate images directory")
 	}
 
 	// Delete all cache metadata files
-	cacheMetadataDir := s.pathManager.GetBasePath() + "/cache/metadata"
-	if err := os.RemoveAll(cacheMetadataDir); err != nil && !os.IsNotExist(err) {
+	if err := s.backend.RemoveAll(filepath.Join("cache", "metadata")); err != nil {
 		s.log.WithError(err).Warn("Failed to delete cache metadata directory")
-	}
-	// Recreate empty cache metadata directory
-	if err := os.MkdirAll(cacheMetadataDir, 0755); err != nil {
-		s.log.WithError(err).Warn("Failed to recreate cache metadata directory")
 	}
 
 	// Reset cache state in memory
@@ -662,23 +575,20 @@ func (s *ProxyService) PurgeAllCache() error {
 	s.cacheState.TotalSize = 0
 	s.cacheState.ItemCount = 0
 
-	// Delete legacy state.json if exists (we use filesystem as source of truth now)
+	// Delete legacy state.json
 	statePath := s.pathManager.GetCacheStatePath()
-	os.Remove(statePath)
+	s.backend.Delete(statePath)
 
 	s.log.Info("Cache purged successfully")
 	return nil
 }
 
-// loadCacheState loads the cache state from disk
+// loadCacheState loads the cache state from storage
 func (s *ProxyService) loadCacheState() {
 	statePath := s.pathManager.GetCacheStatePath()
 
-	data, err := os.ReadFile(statePath)
+	data, err := s.backend.Read(statePath)
 	if err != nil {
-		if !os.IsNotExist(err) {
-			s.log.WithError(err).Warn("Failed to load cache state")
-		}
 		return
 	}
 
@@ -697,7 +607,7 @@ func (s *ProxyService) loadCacheState() {
 	}).Info("Cache state loaded")
 }
 
-// saveCacheState persists the cache state to disk
+// saveCacheState persists the cache state to storage
 func (s *ProxyService) saveCacheState() error {
 	statePath := s.pathManager.GetCacheStatePath()
 
@@ -706,7 +616,7 @@ func (s *ProxyService) saveCacheState() error {
 		return fmt.Errorf("failed to marshal cache state: %w", err)
 	}
 
-	if err := os.WriteFile(statePath, data, 0644); err != nil {
+	if err := s.backend.Write(statePath, data); err != nil {
 		return fmt.Errorf("failed to write cache state: %w", err)
 	}
 

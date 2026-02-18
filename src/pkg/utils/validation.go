@@ -1,7 +1,10 @@
 package utils
 
 import (
+	"crypto/sha256"
 	"fmt"
+	"io"
+	"os"
 	"regexp"
 )
 
@@ -87,5 +90,57 @@ func ValidateUUID(uuid string) error {
 	if !uuidPattern.MatchString(uuid) {
 		return fmt.Errorf("invalid UUID format")
 	}
+	return nil
+}
+
+// ComputeFileDigest computes the sha256 digest of a file by streaming it
+// without loading the entire file into memory.
+func ComputeFileDigest(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", fmt.Errorf("failed to open file for digest: %w", err)
+	}
+	defer f.Close()
+
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", fmt.Errorf("failed to compute digest: %w", err)
+	}
+
+	return fmt.Sprintf("sha256:%x", h.Sum(nil)), nil
+}
+
+// ValidateManifestContent performs minimal structural validation of an OCI manifest.
+// Only rejects clearly malformed payloads. Does NOT restrict mediaType because the
+// OCI spec allows arbitrary artifact types (Helm, WASM, SBOM, Cosign signatures, etc.).
+func ValidateManifestContent(manifest map[string]interface{}) error {
+	// schemaVersion must be present and equal to 2
+	sv, ok := manifest["schemaVersion"]
+	if !ok {
+		return fmt.Errorf("MANIFEST_INVALID: missing schemaVersion field")
+	}
+	svFloat, ok := sv.(float64)
+	if !ok || svFloat != 2 {
+		return fmt.Errorf("MANIFEST_INVALID: schemaVersion must be 2, got %v", sv)
+	}
+
+	// Must have either "manifests" (index) or "config" (image/artifact manifest)
+	_, hasManifests := manifest["manifests"]
+	_, hasConfig := manifest["config"]
+	if !hasManifests && !hasConfig {
+		return fmt.Errorf("MANIFEST_INVALID: must contain either 'config' or 'manifests' field")
+	}
+
+	// For non-index manifests, config must be an object with a digest
+	if !hasManifests && hasConfig {
+		cfgMap, ok := manifest["config"].(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("MANIFEST_INVALID: config must be an object")
+		}
+		if _, hasDigest := cfgMap["digest"]; !hasDigest {
+			return fmt.Errorf("MANIFEST_INVALID: config.digest is required")
+		}
+	}
+
 	return nil
 }

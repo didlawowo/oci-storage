@@ -4,18 +4,33 @@ podAnnotations:
   oci-portal-skip: "true"
 image:
   repository: fizzbuzz2/oci-storage
-  tag: "v1.4.0"
+  tag: "v1.4.2"
   pullPolicy: "Always"
   pullSecrets: []
 strategy:
-  type: Recreate
-replicas: 1
+  type: Recreate  # automatically switched to RollingUpdate when s3.enabled=true
+replicas: 1       # >1 requires s3.enabled=true (no shared local PVC)
 autoscaling:
-  enabled: false
+  enabled: false  # enable only when s3.enabled=true
   minReplicas: 1
   maxReplicas: 10
   targetCPUUtilizationPercentage: 80
   targetMemoryUtilizationPercentage: 80
+# S3-compatible storage backend (Garage, MinIO, AWS S3)
+# When enabled, replaces the local PVC for data storage, allowing multiple replicas.
+s3:
+  enabled: false
+  endpoint: "http://garage.garage.svc:3900"
+  region: "garage"
+  bucket: "oci-storage"
+  pathStyle: true  # true for Garage/MinIO, false for AWS
+  existingSecret: ""  # secret with keys: S3_ACCESS_KEY, S3_SECRET_KEY
+# Redis for shared state across replicas
+redis:
+  enabled: false
+  addr: "redis.redis.svc:6379"
+  db: 0
+  existingSecret: ""  # secret with key: REDIS_PASSWORD
 pdb:
   enabled: true
   maxUnavailable: 1
@@ -222,7 +237,7 @@ trivy:
   enabled: true
   image:
     repository: aquasec/trivy
-    tag: "v1.3.4"
+    tag: "v1.4.2"
     pullPolicy: IfNotPresent
   resources:
     requests:

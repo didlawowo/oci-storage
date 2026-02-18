@@ -8,10 +8,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"oci-storage/config"
+	"oci-storage/pkg/coordination"
 	interfaces "oci-storage/pkg/interfaces"
 	"oci-storage/pkg/models"
+	"oci-storage/pkg/storage"
 	utils "oci-storage/pkg/utils"
 
 	"github.com/gofiber/fiber/v2"
@@ -31,13 +34,15 @@ var (
 )
 
 type OCIHandler struct {
-	log          *utils.Logger
-	chartService interfaces.ChartServiceInterface
-	imageService interfaces.ImageServiceInterface
-	proxyService interfaces.ProxyServiceInterface
-	scanService  interfaces.ScanServiceInterface
-	pathManager  *utils.PathManager
-	config       *config.Config
+	log            *utils.Logger
+	chartService   interfaces.ChartServiceInterface
+	imageService   interfaces.ImageServiceInterface
+	proxyService   interfaces.ProxyServiceInterface
+	scanService    interfaces.ScanServiceInterface
+	pathManager    *utils.PathManager
+	backend        storage.Backend
+	uploadTracker  coordination.UploadTracker
+	config         *config.Config
 }
 
 func NewOCIHandler(
@@ -47,15 +52,20 @@ func NewOCIHandler(
 	scanService interfaces.ScanServiceInterface,
 	cfg *config.Config,
 	log *utils.Logger,
+	pm *utils.PathManager,
+	backend storage.Backend,
+	uploadTracker coordination.UploadTracker,
 ) *OCIHandler {
 	return &OCIHandler{
-		chartService: chartService,
-		imageService: imageService,
-		proxyService: proxyService,
-		scanService:  scanService,
-		config:       cfg,
-		log:          log,
-		pathManager:  chartService.GetPathManager(),
+		chartService:  chartService,
+		imageService:  imageService,
+		proxyService:  proxyService,
+		scanService:   scanService,
+		config:        cfg,
+		log:           log,
+		pathManager:   pm,
+		backend:       backend,
+		uploadTracker: uploadTracker,
 	}
 }
 
@@ -91,12 +101,12 @@ func (h *OCIHandler) GetBlob(c *fiber.Ctx) error {
 		"digest":         digest,
 	}).Debug("Processing blob download request")
 
-	// Try local first - use SendFile to avoid loading entire blob into memory
+	// Try local first - stream from backend
 	blobPath := h.pathManager.GetBlobPath(digest)
-	if _, err := os.Stat(blobPath); err == nil {
+	if exists, _ := h.backend.Exists(blobPath); exists {
 		c.Set("Docker-Content-Digest", digest)
 		c.Set("Content-Type", "application/octet-stream")
-		return c.SendFile(blobPath)
+		return h.sendBlob(c, blobPath)
 	}
 
 	// Not found locally - try proxy if enabled
@@ -111,6 +121,23 @@ func (h *OCIHandler) GetBlob(c *fiber.Ctx) error {
 
 	h.log.WithFunc().Debug("Blob not found")
 	return c.SendStatus(404)
+}
+
+// sendBlob streams a blob from the backend to the client
+func (h *OCIHandler) sendBlob(c *fiber.Ctx, path string) error {
+	info, err := h.backend.Stat(path)
+	if err != nil {
+		return c.SendStatus(500)
+	}
+	reader, err := h.backend.ReadStream(path)
+	if err != nil {
+		return c.SendStatus(500)
+	}
+	c.Set("Content-Length", fmt.Sprintf("%d", info.Size))
+	// Note: Do NOT defer reader.Close() here. Fiber/fasthttp reads the stream
+	// asynchronously after the handler returns. Closing it here would cause EOF.
+	// fasthttp will close the reader when it implements io.Closer.
+	return c.SendStream(reader, int(info.Size))
 }
 
 func (h *OCIHandler) HandleCatalog(c *fiber.Ctx) error {
@@ -338,12 +365,12 @@ func (h *OCIHandler) findManifest(name, reference string) ([]byte, string, error
 	}
 
 	searchPaths := []string{
-		filepath.Join(h.pathManager.GetBasePath(), "manifests", name, reference+".json"),
+		h.pathManager.GetManifestPath(name, reference),
 		h.pathManager.GetImageManifestPath(name, reference),
 	}
 
 	for _, path := range searchPaths {
-		if data, err := os.ReadFile(path); err == nil {
+		if data, err := h.backend.Read(path); err == nil {
 			return data, path, nil
 		}
 	}
@@ -355,7 +382,7 @@ func (h *OCIHandler) findManifest(name, reference string) ([]byte, string, error
 func (h *OCIHandler) findManifestByDigest(name, digest string) ([]byte, string, error) {
 	// First try blob path (most reliable - stored with correct digest)
 	blobPath := h.pathManager.GetBlobPath(digest)
-	if data, err := os.ReadFile(blobPath); err == nil {
+	if data, err := h.backend.Read(blobPath); err == nil {
 		return data, blobPath, nil
 	}
 
@@ -363,15 +390,15 @@ func (h *OCIHandler) findManifestByDigest(name, digest string) ([]byte, string, 
 	// This handles cases where manifest was stored with digest in filename
 	digestFileName := strings.Replace(digest, ":", "_", 1) + ".json"
 
-	helmManifestsDir := filepath.Join(h.pathManager.GetBasePath(), "manifests", name)
+	helmManifestsDir := filepath.Join("manifests", name)
 	helmManifestPath := filepath.Join(helmManifestsDir, digestFileName)
-	if data, err := os.ReadFile(helmManifestPath); err == nil {
+	if data, err := h.backend.Read(helmManifestPath); err == nil {
 		return data, helmManifestPath, nil
 	}
 
-	imageManifestsDir := filepath.Join(h.pathManager.GetBasePath(), "images", name, "manifests")
+	imageManifestsDir := filepath.Join("images", name, "manifests")
 	imageManifestPath := filepath.Join(imageManifestsDir, digestFileName)
-	if data, err := os.ReadFile(imageManifestPath); err == nil {
+	if data, err := h.backend.Read(imageManifestPath); err == nil {
 		return data, imageManifestPath, nil
 	}
 
@@ -389,17 +416,17 @@ func (h *OCIHandler) findManifestByDigest(name, digest string) ([]byte, string, 
 
 // searchDirForDigest searches a directory for a file matching the given digest
 func (h *OCIHandler) searchDirForDigest(dir, targetDigest string) ([]byte, string, error) {
-	files, err := os.ReadDir(dir)
+	entries, err := h.backend.List(dir)
 	if err != nil {
 		return nil, "", err
 	}
 
-	for _, f := range files {
-		if f.IsDir() {
+	for _, entry := range entries {
+		if entry.IsDir {
 			continue
 		}
-		filePath := filepath.Join(dir, f.Name())
-		data, err := os.ReadFile(filePath)
+		filePath := filepath.Join(dir, entry.Name)
+		data, err := h.backend.Read(filePath)
 		if err != nil {
 			continue
 		}
@@ -417,7 +444,7 @@ func (h *OCIHandler) getBlobByDigest(digest string) ([]byte, error) {
 	blobPath := h.pathManager.GetBlobPath(digest)
 	h.log.WithFunc().WithField("path", blobPath).Debug("Retrieving blob")
 
-	chartData, err := os.ReadFile(blobPath)
+	chartData, err := h.backend.Read(blobPath)
 	if err != nil {
 		h.log.WithFunc().WithError(err).Error("Failed to read blob data")
 		return nil, fmt.Errorf("failed to read blob: %w", err)
@@ -470,12 +497,7 @@ func (h *OCIHandler) PutBlob(c *fiber.Ctx) error {
 		"path":   blobPath,
 	}).Debug("Processing blob upload")
 
-	if err := os.MkdirAll(filepath.Dir(blobPath), 0755); err != nil {
-		h.log.WithFunc().WithError(err).Error("Failed to create blob directory")
-		return c.SendStatus(500)
-	}
-
-	if err := os.Rename(tmpPath, blobPath); err != nil {
+	if err := h.backend.Import(tmpPath, blobPath); err != nil {
 		h.log.WithFunc().WithError(err).Error("Failed to move blob to final path")
 		return c.SendStatus(500)
 	}
@@ -492,6 +514,12 @@ func (h *OCIHandler) PostUpload(c *fiber.Ctx) error {
 		"name": name,
 		"uuid": uuid,
 	}).Debug("Initializing upload")
+
+	// Register upload session so other replicas know this pod owns it.
+	// TTL of 1 hour covers even very large chunked uploads.
+	if err := h.uploadTracker.Register(c.Context(), uuid, 1*time.Hour); err != nil {
+		h.log.WithError(err).Warn("Failed to register upload session")
+	}
 
 	// Build absolute URL for Location header (required by crane and other OCI clients)
 	scheme := "http"
@@ -514,6 +542,12 @@ func (h *OCIHandler) PatchBlob(c *fiber.Ctx) error {
 		return HTTPError(c, 400, "Invalid UUID format")
 	}
 
+	// Check that this upload belongs to this pod (multi-replica safety)
+	if err := h.uploadTracker.CheckOwnership(c.Context(), uuid); err != nil {
+		h.log.WithError(err).WithField("uuid", uuid).Error("Upload routed to wrong replica")
+		return HTTPError(c, 409, fmt.Sprintf("UPLOAD_INVALID: %s - configure session affinity on your load balancer", err.Error()))
+	}
+
 	tempPath := h.pathManager.GetTempPath(uuid)
 
 	h.log.WithFunc().WithFields(logrus.Fields{
@@ -527,14 +561,18 @@ func (h *OCIHandler) PatchBlob(c *fiber.Ctx) error {
 	}
 
 	// Stream body to disk to handle large blobs without loading into memory
-	file, err := os.Create(tempPath)
+	// Use O_APPEND to support chunked uploads (multiple PATCH requests per upload session)
+	file, err := os.OpenFile(tempPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
 	if err != nil {
-		h.log.WithFunc().WithError(err).Error("Failed to create temp file")
+		h.log.WithFunc().WithError(err).Error("Failed to open temp file for PATCH")
 		return c.SendStatus(500)
 	}
-	defer file.Close()
+
+	// Track current offset before writing (for Range response header)
+	startOffset, _ := file.Seek(0, io.SeekEnd)
 
 	written, err := io.Copy(file, c.Request().BodyStream())
+	file.Close()
 	if err != nil {
 		h.log.WithFunc().WithError(err).Error("Failed to stream body to temp file")
 		return c.SendStatus(500)
@@ -542,11 +580,13 @@ func (h *OCIHandler) PatchBlob(c *fiber.Ctx) error {
 
 	if written == 0 {
 		h.log.WithFunc().Error("Received empty body")
-		os.Remove(tempPath)
 		return HTTPError(c, 400, "Empty body")
 	}
 
-	h.log.WithFunc().WithField("bytes", written).Info("Successfully processed PATCH data")
+	h.log.WithFunc().WithFields(logrus.Fields{
+		"bytes":       written,
+		"startOffset": startOffset,
+	}).Info("Successfully processed PATCH data")
 
 	// Build absolute URL for Location header (required by OCI clients like crane)
 	scheme := "http"
@@ -556,7 +596,7 @@ func (h *OCIHandler) PatchBlob(c *fiber.Ctx) error {
 	location := fmt.Sprintf("%s://%s/v2/%s/blobs/uploads/%s", scheme, c.Hostname(), name, uuid)
 	c.Set("Location", location)
 	c.Set("Docker-Upload-UUID", uuid)
-	c.Set("Range", fmt.Sprintf("0-%d", written-1))
+	c.Set("Range", fmt.Sprintf("0-%d", startOffset+written-1))
 	return c.SendStatus(202)
 }
 
@@ -577,6 +617,12 @@ func (h *OCIHandler) CompleteUpload(c *fiber.Ctx) error {
 	if err := utils.ValidateDigest(digest); err != nil {
 		h.log.WithField("digest", digest).Warn("Invalid digest format")
 		return HTTPError(c, 400, "Invalid digest format")
+	}
+
+	// Check that this upload belongs to this pod (multi-replica safety)
+	if err := h.uploadTracker.CheckOwnership(c.Context(), uuid); err != nil {
+		h.log.WithError(err).WithField("uuid", uuid).Error("Upload routed to wrong replica")
+		return HTTPError(c, 409, fmt.Sprintf("UPLOAD_INVALID: %s - configure session affinity on your load balancer", err.Error()))
 	}
 
 	tempPath := h.pathManager.GetTempPath(uuid)
@@ -609,9 +655,30 @@ func (h *OCIHandler) CompleteUpload(c *fiber.Ctx) error {
 		}
 	}
 
-	if err := os.Rename(tempPath, finalPath); err != nil {
+	// Verify the uploaded content matches the declared digest
+	actualDigest, err := utils.ComputeFileDigest(tempPath)
+	if err != nil {
+		h.log.WithFunc().WithError(err).Error("Failed to compute digest of uploaded blob")
+		os.Remove(tempPath)
+		return c.SendStatus(500)
+	}
+	if actualDigest != digest {
+		h.log.WithFunc().WithFields(logrus.Fields{
+			"expected": digest,
+			"actual":   actualDigest,
+		}).Error("Blob digest mismatch - uploaded content does not match declared digest")
+		os.Remove(tempPath)
+		return HTTPError(c, 400, fmt.Sprintf("DIGEST_INVALID: expected %s but got %s", digest, actualDigest))
+	}
+
+	if err := h.backend.Import(tempPath, finalPath); err != nil {
 		h.log.WithFunc().WithError(err).Error("Failed to finalize upload")
 		return c.SendStatus(500)
+	}
+
+	// Clean up upload session tracking
+	if err := h.uploadTracker.Remove(c.Context(), uuid); err != nil {
+		h.log.WithError(err).Debug("Failed to remove upload tracking entry")
 	}
 
 	c.Set("Docker-Content-Digest", digest)
@@ -641,21 +708,28 @@ func (h *OCIHandler) HeadBlob(c *fiber.Ctx) error {
 		"path":   blobPath,
 	}).Debug("Processing HEAD request")
 
-	info, err := os.Stat(blobPath)
+	info, err := h.backend.Stat(blobPath)
 	if err == nil {
-		c.Set("Content-Length", fmt.Sprintf("%d", info.Size()))
+		c.Set("Content-Length", fmt.Sprintf("%d", info.Size))
 		c.Set("Docker-Content-Digest", digest)
 		c.Set("Content-Type", "application/octet-stream")
 		return c.SendStatus(200)
 	}
 
-	if os.IsNotExist(err) {
-		h.log.WithFunc().Debug("Blob not found locally")
-		return c.SendStatus(404)
+	// Blob not found locally - check upstream proxy if enabled
+	// Container runtimes (containerd, Docker) do HEAD before GET to check
+	// blob existence. Without this, proxy images fail with "blob unknown".
+	normalizedName := normalizeDockerHubName(name)
+	isProxyPath := strings.HasPrefix(normalizedName, "proxy/")
+	if h.proxyService != nil && h.proxyService.IsEnabled() && isProxyPath {
+		h.log.WithFunc().WithFields(logrus.Fields{
+			"name":   normalizedName,
+			"digest": digest,
+		}).Debug("Blob not found locally, checking upstream via proxy HEAD")
+		return h.proxyHeadBlob(c, normalizedName, digest)
 	}
-
-	h.log.WithFunc().WithError(err).Error("Failed to check blob")
-	return c.SendStatus(500)
+	h.log.WithFunc().Debug("Blob not found locally")
+	return c.SendStatus(404)
 }
 
 func (h *OCIHandler) PutManifest(c *fiber.Ctx) error {
@@ -686,17 +760,25 @@ func (h *OCIHandler) PutManifest(c *fiber.Ctx) error {
 	// CRITICAL: Use the raw body bytes for storage to preserve exact content
 	// Re-marshaling JSON changes field order and formatting, corrupting the digest
 	manifestData := c.Body()
+
+	// Structural validation: ensure the manifest is valid JSON with required OCI fields
+	var rawManifest map[string]interface{}
+	if err := json.Unmarshal(manifestData, &rawManifest); err != nil {
+		h.log.WithFunc().WithError(err).Error("Manifest is not valid JSON")
+		return HTTPError(c, 400, "MANIFEST_INVALID: request body is not valid JSON")
+	}
+	if err := utils.ValidateManifestContent(rawManifest); err != nil {
+		h.log.WithFunc().WithError(err).Warn("Manifest structural validation failed")
+		return HTTPError(c, 400, err.Error())
+	}
+
 	digest := sha256.Sum256(manifestData)
 	digestStr := fmt.Sprintf("sha256:%x", digest)
 
 	// Always save manifest to blob storage first (for digest-based lookups)
 	// This ensures the exact bytes are preserved and can be retrieved by digest
 	blobPath := h.pathManager.GetBlobPath(digestStr)
-	if err := os.MkdirAll(filepath.Dir(blobPath), 0755); err != nil {
-		h.log.WithFunc().WithError(err).Error("Failed to create blob directory")
-		return c.SendStatus(500)
-	}
-	if err := os.WriteFile(blobPath, manifestData, 0644); err != nil {
+	if err := h.backend.Write(blobPath, manifestData); err != nil {
 		h.log.WithFunc().WithError(err).Error("Failed to save manifest blob")
 		return c.SendStatus(500)
 	}
@@ -882,30 +964,26 @@ func (h *OCIHandler) validateManifestBlobSizes(name string, manifest *models.OCI
 		}
 
 		blobPath := h.pathManager.GetBlobPath(desc.Digest)
-		info, err := os.Stat(blobPath)
+		info, err := h.backend.Stat(blobPath)
 		if err != nil {
-			if os.IsNotExist(err) {
-				h.log.WithFields(logrus.Fields{
-					"name":   name,
-					"digest": desc.Digest,
-				}).Warn("Manifest references non-existent blob")
-				// Don't reject - blob may arrive later in cross-repo mount scenarios
-				continue
-			}
-			h.log.WithError(err).WithField("digest", desc.Digest).Error("Failed to stat blob")
+			h.log.WithFields(logrus.Fields{
+				"name":   name,
+				"digest": desc.Digest,
+			}).Warn("Manifest references non-existent blob")
+			// Don't reject - blob may arrive later in cross-repo mount scenarios
 			continue
 		}
 
-		if desc.Size > 0 && info.Size() != desc.Size {
+		if desc.Size > 0 && info.Size != desc.Size {
 			h.log.WithFields(logrus.Fields{
 				"name":         name,
 				"digest":       desc.Digest,
 				"declaredSize": desc.Size,
-				"actualSize":   info.Size(),
+				"actualSize":   info.Size,
 			}).Error("Manifest layer size mismatch - declared size does not match blob on disk")
 			return fmt.Errorf(
 				"BLOB_SIZE_MISMATCH: layer %s declared size %d but actual size is %d",
-				desc.Digest, desc.Size, info.Size(),
+				desc.Digest, desc.Size, info.Size,
 			)
 		}
 	}
@@ -913,19 +991,12 @@ func (h *OCIHandler) validateManifestBlobSizes(name string, manifest *models.OCI
 	return nil
 }
 
-// saveManifestFile saves a manifest to the specified path
+// saveManifestFile saves a manifest to the specified path via backend
 func (h *OCIHandler) saveManifestFile(manifestPath string, data []byte) error {
-	manifestDir := filepath.Dir(manifestPath)
-	if err := os.MkdirAll(manifestDir, 0755); err != nil {
-		h.log.WithFunc().WithError(err).Error("Failed to create manifest directory")
-		return err
-	}
-
-	if err := os.WriteFile(manifestPath, data, 0644); err != nil {
+	if err := h.backend.Write(manifestPath, data); err != nil {
 		h.log.WithFunc().WithError(err).Error("Failed to save manifest")
 		return err
 	}
-
 	return nil
 }
 
@@ -949,7 +1020,7 @@ func (h *OCIHandler) calculateManifestListSizeFromBlobs(index models.OCIIndex) i
 
 	// Read the child manifest from local blob storage
 	blobPath := h.pathManager.GetBlobPath(targetDigest)
-	data, err := os.ReadFile(blobPath)
+	data, err := h.backend.Read(blobPath)
 	if err != nil {
 		h.log.WithError(err).WithField("digest", targetDigest).Debug("Could not read child manifest for size calculation")
 		return 0

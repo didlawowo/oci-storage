@@ -10,32 +10,52 @@
  * @param {boolean} isError - Indique s'il s'agit d'une erreur (rouge) ou d'un succès (vert)
  */
 function showModal(message, isError = true) {
-  // ⚠️ Debug - Vérifier si la fonction est appelée
-  console.log("showModal called:", message, isError);
+  if (!isError) {
+    // Success messages: show a toast that auto-dismisses
+    showToast(message);
+    return;
+  }
 
   const modal = document.getElementById("errorModal");
   const content = document.getElementById("errorModalContent");
   const title = modal.querySelector("h3");
 
-  // Mettre à jour le contenu et l'apparence
   content.textContent = message;
+  title.textContent = "Erreur";
+  title.classList.remove("text-green-600");
+  title.classList.add("text-red-600");
 
-  if (isError) {
-    title.textContent = "Erreur";
-    title.classList.remove("text-green-600");
-    title.classList.add("text-red-600");
-  } else {
-    title.textContent = "Succès";
-    title.classList.remove("text-red-600");
-    title.classList.add("text-green-600");
-  }
-
-  // Afficher la modale - s'assurer qu'elle est visible
   modal.classList.remove("hidden");
   modal.style.display = "flex";
+}
 
-  // ⚠️ Debug - Vérifier l'état de la modale après tentative d'affichage
-  console.log("Modal state after show:", modal.classList, modal.style.display);
+/**
+ * Affiche un toast de succès qui disparaît automatiquement
+ */
+function showToast(message) {
+  let container = document.getElementById("toastContainer");
+  if (!container) {
+    container = document.createElement("div");
+    container.id = "toastContainer";
+    container.style.cssText = "position:fixed;top:1rem;right:1rem;z-index:9999;display:flex;flex-direction:column;gap:0.5rem;";
+    document.body.appendChild(container);
+  }
+
+  const toast = document.createElement("div");
+  toast.style.cssText = "background:#065f46;color:white;padding:0.75rem 1.25rem;border-radius:0.5rem;box-shadow:0 4px 12px rgba(0,0,0,0.15);font-size:0.875rem;opacity:0;transform:translateX(1rem);transition:all 0.3s ease;";
+  toast.textContent = message;
+  container.appendChild(toast);
+
+  requestAnimationFrame(() => {
+    toast.style.opacity = "1";
+    toast.style.transform = "translateX(0)";
+  });
+
+  setTimeout(() => {
+    toast.style.opacity = "0";
+    toast.style.transform = "translateX(1rem)";
+    setTimeout(() => toast.remove(), 300);
+  }, 3000);
 }
 
 /**
@@ -168,10 +188,6 @@ function switchVersion(chartName, version) {
  * @returns {Promise<void>}
  */
 async function deleteChart(name, version) {
-  if (!confirm("Are you sure you want to delete this version?")) {
-    return;
-  }
-
   try {
     const response = await fetch(`/chart/${name}/${version}`, {
       method: "DELETE",
@@ -350,13 +366,6 @@ async function loadCacheStatus() {
  * Purge the entire cache
  */
 async function purgeCache() {
-  if (
-    !confirm(
-      "Are you sure you want to purge the entire image cache? This cannot be undone."
-    )
-  ) {
-    return;
-  }
 
   try {
     const response = await fetch("/cache/purge", { method: "POST" });
@@ -918,10 +927,6 @@ function switchImageTag(imageName, tag) {
  * @param {string} tag - The tag to delete
  */
 async function deleteImage(name, tag) {
-  if (!confirm(`Are you sure you want to delete ${name}:${tag}?`)) {
-    return;
-  }
-
   try {
     const response = await fetch(`/image/${name}/${tag}`, {
       method: "DELETE",
@@ -946,10 +951,6 @@ async function deleteImage(name, tag) {
  * @param {string} tag - The tag to delete
  */
 async function deleteCachedImage(name, tag) {
-  if (!confirm(`Are you sure you want to remove ${name}:${tag} from cache?`)) {
-    return;
-  }
-
   try {
     // Don't encode slashes in name - Fiber's :name+ route expects literal slashes
     // Only encode special characters that could break the URL
@@ -1343,8 +1344,6 @@ async function denyImage(digestShort) {
 }
 
 async function resetDecision(digestShort) {
-  if (!confirm("Reset this decision? The image will require re-review.")) return;
-
   try {
     const resp = await fetch(`/api/scan/decision/${digestShort}`, { method: "DELETE" });
     if (resp.ok) {

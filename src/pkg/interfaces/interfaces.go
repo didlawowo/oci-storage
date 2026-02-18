@@ -3,6 +3,7 @@ package interfaces
 import (
 	"context"
 	"io"
+	"net/http"
 
 	"oci-storage/pkg/models"
 	storage "oci-storage/pkg/utils"
@@ -107,4 +108,6 @@ type ProxyServiceInterface interface {
 	IsEnabled() bool
 	// PurgeAllCache removes all cached images and blobs
 	PurgeAllCache() error
+	// FetchWithAuth performs an HTTP request with upstream registry authentication
+	FetchWithAuth(ctx context.Context, req *http.Request, registryURL, name string) (*http.Response, error)
 }

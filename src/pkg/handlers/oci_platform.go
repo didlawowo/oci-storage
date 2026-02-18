@@ -5,8 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -172,7 +170,7 @@ func (h *OCIHandler) resolvePlatformManifest(c *fiber.Ctx, indexData []byte) ([]
 
 	// Try to fetch from cache first
 	blobPath := h.pathManager.GetBlobPath(matchingDesc.Digest)
-	manifestData, err := os.ReadFile(blobPath)
+	manifestData, err := h.backend.Read(blobPath)
 	if err == nil {
 		return manifestData, matchingDesc.Digest, nil
 	}
@@ -204,15 +202,13 @@ func (h *OCIHandler) resolvePlatformManifest(c *fiber.Ctx, indexData []byte) ([]
 	}
 
 	// Cache the manifest for future requests
-	if err := os.MkdirAll(filepath.Dir(blobPath), 0755); err == nil {
-		if err := os.WriteFile(blobPath, manifestData, 0644); err != nil {
-			h.log.WithError(err).Warn("Failed to cache platform manifest")
-		} else {
-			h.log.WithFields(logrus.Fields{
-				"platform": matchingDesc.Platform.OS + "/" + matchingDesc.Platform.Architecture,
-				"digest":   matchingDesc.Digest,
-			}).Info("Platform manifest fetched and cached on-demand")
-		}
+	if err := h.backend.Write(blobPath, manifestData); err != nil {
+		h.log.WithError(err).Warn("Failed to cache platform manifest")
+	} else {
+		h.log.WithFields(logrus.Fields{
+			"platform": matchingDesc.Platform.OS + "/" + matchingDesc.Platform.Architecture,
+			"digest":   matchingDesc.Digest,
+		}).Info("Platform manifest fetched and cached on-demand")
 	}
 
 	return manifestData, matchingDesc.Digest, nil

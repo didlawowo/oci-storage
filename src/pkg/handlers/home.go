@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"io"
 	"oci-storage/pkg/interfaces"
+	"oci-storage/pkg/storage"
 	utils "oci-storage/pkg/utils"
 	"oci-storage/pkg/version"
-	"os"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
@@ -17,27 +17,31 @@ type HelmHandler struct {
 	service     interfaces.ChartServiceInterface
 	log         *utils.Logger
 	pathManager *utils.PathManager
+	backend     storage.Backend
 }
 
 type IndexHandler struct {
 	service     interfaces.ChartServiceInterface
 	log         *utils.Logger
 	pathManager *utils.PathManager
+	backend     storage.Backend
 }
 
-func NewHelmHandler(service interfaces.ChartServiceInterface, pathManager *utils.PathManager, logger *utils.Logger) *HelmHandler {
+func NewHelmHandler(service interfaces.ChartServiceInterface, pathManager *utils.PathManager, logger *utils.Logger, backend storage.Backend) *HelmHandler {
 	return &HelmHandler{
 		service:     service,
 		log:         logger,
 		pathManager: pathManager,
+		backend:     backend,
 	}
 }
 
-func NewIndexHandler(service interfaces.ChartServiceInterface, pathManager *utils.PathManager, logger *utils.Logger) *IndexHandler {
+func NewIndexHandler(service interfaces.ChartServiceInterface, pathManager *utils.PathManager, logger *utils.Logger, backend storage.Backend) *IndexHandler {
 	return &IndexHandler{
 		service:     service,
 		log:         logger,
 		pathManager: pathManager,
+		backend:     backend,
 	}
 }
 
@@ -84,9 +88,9 @@ func (h *IndexHandler) GetIndex(c *fiber.Ctx) error {
 	indexPath := h.pathManager.GetIndexPath()
 	h.log.WithFunc().WithField("path", indexPath).Debug("Processing index.yaml request")
 
-	// Read file directly instead of SendFile to avoid fasthttp file caching
-	// which can serve stale index.yaml after chart upload/delete
-	data, err := os.ReadFile(indexPath)
+	// Read from backend instead of filesystem directly
+	// This avoids fasthttp file caching which can serve stale index.yaml
+	data, err := h.backend.Read(indexPath)
 	if err != nil {
 		h.log.WithFunc().WithError(err).Error("Failed to read index.yaml")
 		return HTTPError(c, 500, "Failed to read index")
@@ -112,7 +116,15 @@ func (h *HelmHandler) GetChart(c *fiber.Ctx) error {
 		return HTTPError(c, 404, "Chart not found")
 	}
 
-	return c.SendFile(h.pathManager.GetChartPath(chartName, version))
+	chartPath := h.pathManager.GetChartPath(chartName, version)
+	data, err := h.backend.Read(chartPath)
+	if err != nil {
+		h.log.WithFunc().WithError(err).Error("Failed to read chart file")
+		return HTTPError(c, 500, "Failed to read chart")
+	}
+
+	c.Set("Content-Type", "application/gzip")
+	return c.Send(data)
 }
 
 func (h *HelmHandler) ListCharts(c *fiber.Ctx) error {
