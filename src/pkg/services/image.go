@@ -239,6 +239,12 @@ func (s *ImageService) DeleteImage(name, tag string) error {
 		return fmt.Errorf("image not found: %s:%s", name, tag)
 	}
 
+	// Collect blob digests from manifest before deleting it
+	var blobDigests []string
+	if manifestExists {
+		blobDigests = s.collectManifestDigests(manifestPath)
+	}
+
 	if manifestExists {
 		if err := s.backend.Delete(manifestPath); err != nil {
 			return fmt.Errorf("failed to delete manifest: %w", err)
@@ -251,12 +257,187 @@ func (s *ImageService) DeleteImage(name, tag string) error {
 		}
 	}
 
+	// Clean up orphaned blobs that are no longer referenced by any manifest
+	if len(blobDigests) > 0 {
+		s.cleanOrphanedBlobs(blobDigests)
+	}
+
+	// Clean up empty image directory
+	s.cleanEmptyImageDir(name)
+
 	s.log.WithFields(logrus.Fields{
 		"name": name,
 		"tag":  tag,
 	}).Info("Docker image deleted successfully")
 
 	return nil
+}
+
+// collectManifestDigests extracts all blob digests (config + layers + sub-manifests) from a manifest file.
+func (s *ImageService) collectManifestDigests(manifestPath string) []string {
+	data, err := s.backend.Read(manifestPath)
+	if err != nil {
+		s.log.WithError(err).Warn("Failed to read manifest for blob cleanup")
+		return nil
+	}
+
+	var manifest struct {
+		Config struct {
+			Digest string `json:"digest"`
+		} `json:"config"`
+		Layers []struct {
+			Digest string `json:"digest"`
+		} `json:"layers"`
+		Manifests []struct {
+			Digest string `json:"digest"`
+		} `json:"manifests"`
+	}
+
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		s.log.WithError(err).Warn("Failed to parse manifest for blob cleanup")
+		return nil
+	}
+
+	var digests []string
+	if manifest.Config.Digest != "" {
+		digests = append(digests, manifest.Config.Digest)
+	}
+	for _, layer := range manifest.Layers {
+		if layer.Digest != "" {
+			digests = append(digests, layer.Digest)
+		}
+	}
+	for _, m := range manifest.Manifests {
+		if m.Digest != "" {
+			digests = append(digests, m.Digest)
+		}
+	}
+
+	return digests
+}
+
+// cleanOrphanedBlobs deletes blobs that are no longer referenced by any remaining manifest.
+// It scans all manifests in images/ and manifests/ to build a set of referenced digests,
+// then deletes any blob from the candidate list that is not in that set.
+func (s *ImageService) cleanOrphanedBlobs(candidateDigests []string) {
+	// Build set of all digests still referenced by remaining manifests
+	referencedDigests := make(map[string]bool)
+	s.walkAndCollectDigests("images", referencedDigests)
+	s.walkAndCollectDigests("manifests", referencedDigests)
+
+	deleted := 0
+	for _, digest := range candidateDigests {
+		bare := strings.TrimPrefix(digest, "sha256:")
+
+		if referencedDigests[digest] || referencedDigests[bare] {
+			s.log.WithField("digest", digest).Debug("Blob still referenced, keeping")
+			continue
+		}
+
+		blobPath := s.pathManager.GetBlobPath(digest)
+		if exists, _ := s.backend.Exists(blobPath); !exists {
+			// Also try bare form (without sha256: prefix)
+			blobPath = s.pathManager.GetBlobPath(bare)
+			if exists, _ := s.backend.Exists(blobPath); !exists {
+				continue
+			}
+		}
+
+		if err := s.backend.Delete(blobPath); err != nil {
+			s.log.WithError(err).WithField("digest", digest).Warn("Failed to delete orphan blob")
+		} else {
+			deleted++
+			s.log.WithField("digest", digest).Info("Deleted orphan blob")
+		}
+	}
+
+	if deleted > 0 {
+		s.log.WithField("count", deleted).Info("Cleaned up orphaned blobs")
+	}
+}
+
+// walkAndCollectDigests recursively scans a directory for JSON manifests and collects
+// all blob digests they reference. This is used to determine which blobs are still in use.
+func (s *ImageService) walkAndCollectDigests(dir string, digests map[string]bool) {
+	entries, err := s.backend.List(dir)
+	if err != nil {
+		return
+	}
+
+	for _, entry := range entries {
+		fullPath := filepath.Join(dir, entry.Name)
+
+		if entry.IsDir {
+			s.walkAndCollectDigests(fullPath, digests)
+			continue
+		}
+
+		if !strings.HasSuffix(entry.Name, ".json") {
+			continue
+		}
+
+		data, err := s.backend.Read(fullPath)
+		if err != nil {
+			continue
+		}
+
+		var manifest struct {
+			Config struct {
+				Digest string `json:"digest"`
+			} `json:"config"`
+			Layers []struct {
+				Digest string `json:"digest"`
+			} `json:"layers"`
+			Manifests []struct {
+				Digest string `json:"digest"`
+			} `json:"manifests"`
+		}
+
+		if err := json.Unmarshal(data, &manifest); err != nil {
+			continue
+		}
+
+		if manifest.Config.Digest != "" {
+			digests[manifest.Config.Digest] = true
+			digests[strings.TrimPrefix(manifest.Config.Digest, "sha256:")] = true
+		}
+		for _, layer := range manifest.Layers {
+			if layer.Digest != "" {
+				digests[layer.Digest] = true
+				digests[strings.TrimPrefix(layer.Digest, "sha256:")] = true
+			}
+		}
+		for _, m := range manifest.Manifests {
+			if m.Digest != "" {
+				digests[m.Digest] = true
+				digests[strings.TrimPrefix(m.Digest, "sha256:")] = true
+			}
+		}
+	}
+}
+
+// cleanEmptyImageDir removes the image directory if no tags remain.
+func (s *ImageService) cleanEmptyImageDir(name string) {
+	manifestsDir := filepath.Join("images", name, "manifests")
+	entries, err := s.backend.List(manifestsDir)
+	if err != nil {
+		return
+	}
+
+	// Check if any manifest files remain (ignore directories)
+	for _, entry := range entries {
+		if !entry.IsDir {
+			return // Still has manifests, keep the directory
+		}
+	}
+
+	// No manifests left — clean up tags dir and image dir
+	tagsDir := filepath.Join("images", name, "tags")
+	if tagEntries, err := s.backend.List(tagsDir); err == nil {
+		for _, entry := range tagEntries {
+			_ = s.backend.Delete(filepath.Join(tagsDir, entry.Name))
+		}
+	}
 }
 
 // GetImageConfig returns the parsed image configuration
