@@ -4,7 +4,7 @@ podAnnotations:
   oci-portal-skip: "true"
 image:
   repository: fizzbuzz2/oci-storage
-  tag: "v1.4.2"
+  tag: "v1.5.1"
   pullPolicy: "Always"
   pullSecrets: []
 strategy:
@@ -237,7 +237,7 @@ trivy:
   enabled: true
   image:
     repository: aquasec/trivy
-    tag: "v1.4.2"
+    tag: "v1.5.1"
     pullPolicy: IfNotPresent
   resources:
     requests:
