@@ -34,15 +34,15 @@ var (
 )
 
 type OCIHandler struct {
-	log            *utils.Logger
-	chartService   interfaces.ChartServiceInterface
-	imageService   interfaces.ImageServiceInterface
-	proxyService   interfaces.ProxyServiceInterface
-	scanService    interfaces.ScanServiceInterface
-	pathManager    *utils.PathManager
-	backend        storage.Backend
-	uploadTracker  coordination.UploadTracker
-	config         *config.Config
+	log           *utils.Logger
+	chartService  interfaces.ChartServiceInterface
+	imageService  interfaces.ImageServiceInterface
+	proxyService  interfaces.ProxyServiceInterface
+	scanService   interfaces.ScanServiceInterface
+	pathManager   *utils.PathManager
+	backend       storage.Backend
+	uploadTracker coordination.UploadTracker
+	config        *config.Config
 }
 
 func NewOCIHandler(
@@ -591,7 +591,9 @@ func (h *OCIHandler) PatchBlob(c *fiber.Ctx) error {
 	// Mark this upload as chunked so CompleteUpload preserves PATCH data (O_APPEND)
 	// instead of truncating on retry (O_TRUNC for monolithic uploads)
 	chunkedMarker := tempPath + ".chunked"
-	os.WriteFile(chunkedMarker, []byte("1"), 0644)
+	if err := os.WriteFile(chunkedMarker, []byte("1"), 0644); err != nil {
+		h.log.WithFunc().WithError(err).Warn("Failed to write chunked marker")
+	}
 
 	// Build absolute URL for Location header (required by OCI clients like crane)
 	scheme := "http"

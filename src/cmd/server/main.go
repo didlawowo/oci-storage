@@ -216,10 +216,10 @@ func main() {
 		StrictRouting:     true,
 		ServerHeader:      "oci storage",
 		BodyLimit:         10 * 1024 * 1024 * 1024, // 10GB for large Docker image layers (ML models, etc.)
-		StreamRequestBody: true,                     // Enable streaming for large uploads
-		ReadTimeout:       30 * time.Minute,         // Allow 30 minutes for large blob uploads (ML models)
-		WriteTimeout:      30 * time.Minute,         // Allow 30 minutes for large blob downloads
-		IdleTimeout:       2 * time.Minute,          // Close idle connections after 2 minutes
+		StreamRequestBody: true,                    // Enable streaming for large uploads
+		ReadTimeout:       30 * time.Minute,        // Allow 30 minutes for large blob uploads (ML models)
+		WriteTimeout:      30 * time.Minute,        // Allow 30 minutes for large blob downloads
+		IdleTimeout:       2 * time.Minute,         // Close idle connections after 2 minutes
 		Views:             html.New("./views", ".html"),
 
 		ErrorHandler: func(c *fiber.Ctx, err error) error {
