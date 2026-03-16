@@ -103,12 +103,8 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           working-directory: ${{ env.GO_WORKING_DIR }}
 
-      - name: Run security checks
-        uses: didlawowo/workflow-ci/.github/actions/go-quality-security@main
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          working-directory: ${{ env.GO_WORKING_DIR }}
-          golangci-lint-version: "v1.64.8"
+      # Security checks already run in ci.yml on branch/PR - skip here to avoid
+      # gosec Go version incompatibility (gosec@latest requires Go 1.25+)
 
   production-build:
     name: "Production Docker Build"
