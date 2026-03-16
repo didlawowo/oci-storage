@@ -15,12 +15,14 @@ import (
 type CacheHandler struct {
 	log          *utils.Logger
 	proxyService interfaces.ProxyServiceInterface
+	pathManager  *utils.PathManager
 }
 
 // NewCacheHandler creates a new cache handler
-func NewCacheHandler(proxyService interfaces.ProxyServiceInterface, log *utils.Logger) *CacheHandler {
+func NewCacheHandler(proxyService interfaces.ProxyServiceInterface, pathManager *utils.PathManager, log *utils.Logger) *CacheHandler {
 	return &CacheHandler{
 		proxyService: proxyService,
+		pathManager:  pathManager,
 		log:          log,
 	}
 }
@@ -37,13 +39,22 @@ func (h *CacheHandler) GetCacheStatus(c *fiber.Ctx) error {
 
 	state := h.proxyService.GetCacheState()
 
-	return c.JSON(fiber.Map{
+	// Use real filesystem stats from PVC instead of hardcoded config maxSizeGB
+	response := fiber.Map{
 		"enabled":      true,
 		"totalSize":    state.TotalSize,
 		"maxSize":      state.MaxSize,
 		"itemCount":    state.ItemCount,
 		"usagePercent": state.UsagePercent,
-	})
+	}
+
+	if diskStats, err := h.pathManager.GetDiskStats(); err == nil {
+		response["diskTotal"] = diskStats.Total
+		response["diskUsed"] = diskStats.Used
+		response["diskAvailable"] = diskStats.Available
+	}
+
+	return c.JSON(response)
 }
 
 // ListCachedImages returns all cached images with metadata

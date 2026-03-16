@@ -334,14 +334,20 @@ async function loadCacheStatus() {
       return mb.toFixed(2) + " MB";
     };
 
-    const usedSize = formatSize(data.totalSize);
-    const maxSize = formatSize(data.maxSize);
-    const percent = data.usagePercent ? data.usagePercent.toFixed(1) : 0;
+    // Use real PVC/disk stats when available, fallback to config maxSize
+    const diskTotal = data.diskTotal || data.maxSize;
+    const diskUsed = data.diskUsed || data.totalSize;
+    const diskPercent = diskTotal > 0 ? (diskUsed / diskTotal) * 100 : 0;
 
-    usageText.textContent = `${usedSize} / ${maxSize} (${percent}%)`;
-    progressBar.style.width = `${Math.min(percent, 100)}%`;
-    itemCount.textContent = `${data.itemCount || 0} images cached`;
+    const usedSize = formatSize(diskUsed);
+    const totalSize = formatSize(diskTotal);
+
+    usageText.textContent = `${usedSize} / ${totalSize} (${diskPercent.toFixed(1)}%)`;
+    progressBar.style.width = `${Math.min(diskPercent, 100)}%`;
+    const cacheInfo = `${data.itemCount || 0} images cached (${formatSize(data.totalSize)} cache)`;
+    itemCount.textContent = cacheInfo;
     proxyStatus.textContent = "Proxy: enabled";
+    const percent = diskPercent;
 
     // Change color based on usage
     progressBar.classList.remove(
