@@ -34,15 +34,15 @@ var (
 )
 
 type OCIHandler struct {
-	log            *utils.Logger
-	chartService   interfaces.ChartServiceInterface
-	imageService   interfaces.ImageServiceInterface
-	proxyService   interfaces.ProxyServiceInterface
-	scanService    interfaces.ScanServiceInterface
-	pathManager    *utils.PathManager
-	backend        storage.Backend
-	uploadTracker  coordination.UploadTracker
-	config         *config.Config
+	log           *utils.Logger
+	chartService  interfaces.ChartServiceInterface
+	imageService  interfaces.ImageServiceInterface
+	proxyService  interfaces.ProxyServiceInterface
+	scanService   interfaces.ScanServiceInterface
+	pathManager   *utils.PathManager
+	backend       storage.Backend
+	uploadTracker coordination.UploadTracker
+	config        *config.Config
 }
 
 func NewOCIHandler(
@@ -588,6 +588,13 @@ func (h *OCIHandler) PatchBlob(c *fiber.Ctx) error {
 		"startOffset": startOffset,
 	}).Info("Successfully processed PATCH data")
 
+	// Mark this upload as chunked so CompleteUpload preserves PATCH data (O_APPEND)
+	// instead of truncating on retry (O_TRUNC for monolithic uploads)
+	chunkedMarker := tempPath + ".chunked"
+	if err := os.WriteFile(chunkedMarker, []byte("1"), 0644); err != nil {
+		h.log.WithFunc().WithError(err).Warn("Failed to write chunked marker")
+	}
+
 	// Build absolute URL for Location header (required by OCI clients like crane)
 	scheme := "http"
 	if c.Protocol() == "https" {
@@ -627,6 +634,7 @@ func (h *OCIHandler) CompleteUpload(c *fiber.Ctx) error {
 
 	tempPath := h.pathManager.GetTempPath(uuid)
 	finalPath := h.pathManager.GetBlobPath(digest)
+	chunkedMarker := tempPath + ".chunked"
 
 	h.log.WithFunc().WithFields(logrus.Fields{
 		"name":      name,
@@ -636,10 +644,32 @@ func (h *OCIHandler) CompleteUpload(c *fiber.Ctx) error {
 		"finalPath": finalPath,
 	}).Debug("Completing upload")
 
+	// Idempotent: if blob already exists at final path, skip processing
+	if _, err := h.backend.Stat(finalPath); err == nil {
+		h.log.WithFunc().WithField("digest", digest).Info("Blob already exists, skipping upload")
+		os.Remove(tempPath)
+		os.Remove(chunkedMarker)
+		if err := h.uploadTracker.Remove(c.Context(), uuid); err != nil {
+			h.log.WithError(err).Debug("Failed to remove upload tracking entry")
+		}
+		c.Set("Docker-Content-Digest", digest)
+		return c.SendStatus(201)
+	}
+
 	// Stream any remaining body data to the temp file
 	bodyStream := c.Request().BodyStream()
 	if bodyStream != nil {
-		file, err := os.OpenFile(tempPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
+		// Determine open mode: if PATCH chunks were written (.chunked marker exists),
+		// append the final chunk. Otherwise use O_TRUNC to handle monolithic upload
+		// retries safely (prevents corrupt data from a previous timed-out attempt).
+		openFlags := os.O_WRONLY | os.O_CREATE
+		if _, err := os.Stat(chunkedMarker); err == nil {
+			openFlags |= os.O_APPEND
+		} else {
+			openFlags |= os.O_TRUNC
+		}
+
+		file, err := os.OpenFile(tempPath, openFlags, 0644)
 		if err != nil {
 			h.log.WithFunc().WithError(err).Error("Failed to open temp file for final data")
 			return c.SendStatus(500)
@@ -660,6 +690,7 @@ func (h *OCIHandler) CompleteUpload(c *fiber.Ctx) error {
 	if err != nil {
 		h.log.WithFunc().WithError(err).Error("Failed to compute digest of uploaded blob")
 		os.Remove(tempPath)
+		os.Remove(chunkedMarker)
 		return c.SendStatus(500)
 	}
 	if actualDigest != digest {
@@ -668,6 +699,7 @@ func (h *OCIHandler) CompleteUpload(c *fiber.Ctx) error {
 			"actual":   actualDigest,
 		}).Error("Blob digest mismatch - uploaded content does not match declared digest")
 		os.Remove(tempPath)
+		os.Remove(chunkedMarker)
 		return HTTPError(c, 400, fmt.Sprintf("DIGEST_INVALID: expected %s but got %s", digest, actualDigest))
 	}
 
@@ -676,7 +708,8 @@ func (h *OCIHandler) CompleteUpload(c *fiber.Ctx) error {
 		return c.SendStatus(500)
 	}
 
-	// Clean up upload session tracking
+	// Clean up upload session tracking and chunked marker
+	os.Remove(chunkedMarker)
 	if err := h.uploadTracker.Remove(c.Context(), uuid); err != nil {
 		h.log.WithError(err).Debug("Failed to remove upload tracking entry")
 	}
