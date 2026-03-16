@@ -21,7 +21,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
 # Image finale
 FROM alpine:latest AS production
 
-ARG TRIVY_VERSION=0.68.2
+ARG TRIVY_VERSION=0.69.3
 RUN adduser -D app -u 1000  -g app --home /app  && \
     apk add --no-cache ca-certificates && \
     wget -qO- https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz | tar xz -C /usr/local/bin trivy && \
