@@ -1,16 +1,18 @@
 # =============================================================================
-# CD - Production Release (Go)
+# Release Please (Go)
 # =============================================================================
-# Runs on: push to main
+# Runs on: push to main + manual trigger
+# Flow: push to main -> creates release PR -> human merges -> push to main ->
+#       release_created=true -> build + push + update helm -> ArgoCD auto-sync
 # Uses reusable actions from didlawowo/workflow-ci
-# Custom: updates Helm values.yaml for ArgoCD deployment
 # =============================================================================
 
-name: "CD - Production Release"
+name: "Release Please"
 
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -23,7 +25,6 @@ env:
   GO_VERSION: "1.24"
   IMAGE_NAME: ${{ secrets.DOCKER_USERNAME }}/oci-storage
   GO_WORKING_DIR: "src"
-  RELEASE_TYPE: "go"
 
 jobs:
   release-please:
@@ -38,21 +39,9 @@ jobs:
         id: release
         uses: googleapis/release-please-action@v4
         with:
-          release-type: ${{ env.RELEASE_TYPE }}
+          release-type: go
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Auto-merge
-        if: steps.release.outputs.pr
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_JSON: ${{ steps.release.outputs.pr }}
-        run: |
-          PR_NUMBER=$(echo "${PR_JSON}" | jq -r '.number')
-          sleep 10
-          gh pr merge "${PR_NUMBER}" --auto --squash --repo ${{ github.repository }}
-
-  # Detect if application code changed (src/, Dockerfile, go.mod/go.sum)
-  # If only helm/, docs, or CI files changed, skip the Docker build
   detect-changes:
     name: "Detect Changes"
     needs: release-please
@@ -68,7 +57,6 @@ jobs:
       - name: Check for application code changes
         id: changes
         run: |
-          # Compare current release tag with the previous one
           CURRENT_TAG="${{ needs.release-please.outputs.tag_name }}"
           PREVIOUS_TAG=$(git tag --sort=-v:refname | grep -v "${CURRENT_TAG}" | head -1)
 
@@ -79,8 +67,6 @@ jobs:
           fi
 
           echo "Comparing ${PREVIOUS_TAG}..${CURRENT_TAG}"
-
-          # Check if any app-related files changed
           APP_CHANGES=$(git diff --name-only "${PREVIOUS_TAG}..HEAD" -- \
             'src/' \
             'Dockerfile' \
@@ -163,11 +149,9 @@ jobs:
             COMMIT=${{ steps.vars.outputs.FULL_SHA }}
             BUILD_TIME=${{ steps.vars.outputs.BUILD_TIME }}
 
-  # Update Helm values for ArgoCD auto-sync
   update-helm:
     name: "Update Helm Values"
     needs: [release-please, detect-changes, production-build]
-    # Run if: app changed and build succeeded, OR app didn't change (helm-only release)
     if: |
       always() &&
       needs.release-please.outputs.release_created == 'true' &&
@@ -188,11 +172,8 @@ jobs:
 
           REPO_NAME=$(echo "${{ github.repository }}" | cut -d'/' -f2 | tr '[:upper:]' '[:lower:]')
 
-          # Update only the main application image (not sidecars like trivy)
           /tmp/yq e -i '(.image.repository) = "${{ secrets.DOCKER_USERNAME }}/'"${REPO_NAME}"'"' helm/values.yaml
           /tmp/yq e -i '(.image.tag) = "${{ needs.release-please.outputs.tag_name }}"' helm/values.yaml
-
-          # Keep appVersion in sync with release tag
           /tmp/yq e -i '.appVersion = "${{ needs.release-please.outputs.version }}"' helm/Chart.yaml
 
           echo "Updated values.yaml:"
