@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.0](https://github.com/didlawowo/oci-storage/compare/v1.6.0...v1.7.0) (2026-03-16)
+
+
+### Features
+
+* disk stats, upload retry safety, and CI improvements ([#49](https://github.com/didlawowo/oci-storage/issues/49)) ([c1e1055](https://github.com/didlawowo/oci-storage/commit/c1e1055236e2e528178ff790181c922829d00a1e))
+
 ## [1.6.0](https://github.com/didlawowo/oci-storage/compare/v1.5.0...v1.6.0) (2026-03-16)
 
 
