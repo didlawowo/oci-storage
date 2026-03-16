@@ -1,0 +1,6 @@
+projectKey=gh_oci-storage
+serverUrl=https://sonarqube.dc-tech.work
+serverVersion=25.12.0.117093
+dashboardUrl=https://sonarqube.dc-tech.work/dashboard?id=gh_oci-storage
+ceTaskId=b3a759a8-1144-42b8-b9e5-8198e00a4203
+ceTaskUrl=https://sonarqube.dc-tech.work/api/ce/task?id=b3a759a8-1144-42b8-b9e5-8198e00a4203
