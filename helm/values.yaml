@@ -4,14 +4,14 @@ podAnnotations:
   oci-portal-skip: "true"
 image:
   repository: fizzbuzz2/oci-storage
-  tag: "v1.5.1"
+  tag: "v1.7.0"
   pullPolicy: "Always"
   pullSecrets: []
 strategy:
-  type: Recreate  # automatically switched to RollingUpdate when s3.enabled=true
-replicas: 1       # >1 requires s3.enabled=true (no shared local PVC)
+  type: Recreate # automatically switched to RollingUpdate when s3.enabled=true
+replicas: 1 # >1 requires s3.enabled=true (no shared local PVC)
 autoscaling:
-  enabled: false  # enable only when s3.enabled=true
+  enabled: false # enable only when s3.enabled=true
   minReplicas: 1
   maxReplicas: 10
   targetCPUUtilizationPercentage: 80
@@ -23,14 +23,14 @@ s3:
   endpoint: "http://garage.garage.svc:3900"
   region: "garage"
   bucket: "oci-storage"
-  pathStyle: true  # true for Garage/MinIO, false for AWS
-  existingSecret: ""  # secret with keys: S3_ACCESS_KEY, S3_SECRET_KEY
+  pathStyle: true # true for Garage/MinIO, false for AWS
+  existingSecret: "" # secret with keys: S3_ACCESS_KEY, S3_SECRET_KEY
 # Redis for shared state across replicas
 redis:
   enabled: false
   addr: "redis.redis.svc:6379"
   db: 0
-  existingSecret: ""  # secret with key: REDIS_PASSWORD
+  existingSecret: "" # secret with key: REDIS_PASSWORD
 pdb:
   enabled: true
   maxUnavailable: 1
