@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.0](https://github.com/didlawowo/oci-storage/compare/v1.5.0...v1.6.0) (2026-03-16)
+
+
+### Features
+
+* handle large image upload timeouts and retry safety ([#46](https://github.com/didlawowo/oci-storage/issues/46)) ([e7f305c](https://github.com/didlawowo/oci-storage/commit/e7f305c9585f0a570f18695e63c68af04961ed4b))
+
 ## [1.5.0](https://github.com/didlawowo/oci-storage/compare/v1.4.1...v1.5.0) (2026-02-18)
 
 
