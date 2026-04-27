@@ -1,7 +1,7 @@
 apiVersion: "v2"
 name: "oci-storage"
-version: 1.5.1
-appVersion: "1.7.0"
+version: 1.8.0
+appVersion: "1.8.0"
 description: Host all your charts in your cluster
 type: application
 icon: https://avatars.githubusercontent.com/u/12622760?v=4
