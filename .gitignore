@@ -6,7 +6,7 @@
 *.dylib
 *.test
 *.out
-
+.scannerwork/*
 # IDE specific files
 .idea/
 .vscode/
@@ -27,3 +27,4 @@ src/config/dc-consulting-home-pulumi.json
 src/config/gcp-creds.json
 **/secrets/*
 helm/rendered.yaml
+.scannerwork/report-task.txt

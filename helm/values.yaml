@@ -39,7 +39,7 @@ redis:
   # Embedded Redis settings (only used when deploy=true)
   image:
     repository: redis
-    tag: "v1.8.0"
+    tag: "7.4-alpine"
     pullPolicy: IfNotPresent
   maxmemory: "256mb"
   memoryLimit: "512Mi"

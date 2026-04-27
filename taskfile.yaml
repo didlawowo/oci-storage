@@ -60,33 +60,41 @@ tasks:
     - kubectl create secret generic oci-storage-backup --from-literal=BACKUP_ENABLED="true" --from-literal=BACKUP_PROVIDER="aws" --from-literal=AWS_BUCKET="oci-storage-backup" --from-literal=AWS_REGION="eu-west-1" --from-literal=AWS_ACCESS_KEY_ID="YOUR_ACCESS_KEY" --from-literal=AWS_SECRET_ACCESS_KEY="YOUR_SECRET_KEY" --namespace=kube-infra --dry-run=client -o yaml | kubectl apply -f -
 
   publish:
-    desc: Build, tag, push image and update helm chart (bumps patch version from latest git tag)
+    desc: 'Build, tag, push image and update helm chart. Usage: task publish (patch) | BUMP=minor task publish | BUMP=major task publish'
     vars:
+      BUMP: '{{.BUMP | default "patch"}}'
       LATEST_TAG:
         sh: git tag --sort=-v:refname | head -1 | sed 's/^v//'
-      MAJOR:
-        sh: git tag --sort=-v:refname | head -1 | sed 's/^v//' | cut -d. -f1
-      MINOR:
-        sh: git tag --sort=-v:refname | head -1 | sed 's/^v//' | cut -d. -f2
-      PATCH:
-        sh: git tag --sort=-v:refname | head -1 | sed 's/^v//' | cut -d. -f3
-      NEW_PATCH:
-        sh: echo $(($(git tag --sort=-v:refname | head -1 | sed 's/^v//' | cut -d. -f3) + 1))
       NEW_VERSION:
-        sh: echo "$(git tag --sort=-v:refname | head -1 | sed 's/^v//' | cut -d. -f1).$(git tag --sort=-v:refname | head -1 | sed 's/^v//' | cut -d. -f2).$(($(git tag --sort=-v:refname | head -1 | sed 's/^v//' | cut -d. -f3) + 1))"
+        sh: |
+          latest=$(git tag --sort=-v:refname | head -1 | sed 's/^v//')
+          major=$(echo $latest | cut -d. -f1)
+          minor=$(echo $latest | cut -d. -f2)
+          patch=$(echo $latest | cut -d. -f3)
+          case "${BUMP:-patch}" in
+            major) echo "$((major+1)).0.0" ;;
+            minor) echo "${major}.$((minor+1)).0" ;;
+            patch|*) echo "${major}.${minor}.$((patch+1))" ;;
+          esac
       COMMIT_SHA:
         sh: git rev-parse --short HEAD
     cmds:
       - echo "Current version {{.LATEST_TAG}} → New version {{.NEW_VERSION}}"
+      # BuildKit cache: re-use layers from registry across builds (cache-to/cache-from).
+      # Cross-compile via Go toolchain (no QEMU) thanks to TARGETOS/TARGETARCH ARGs in Dockerfile.
       - docker buildx build --platform linux/amd64
           --build-arg VERSION={{.NEW_VERSION}}
           --build-arg COMMIT={{.COMMIT_SHA}}
           --build-arg BUILD_TIME={{now | date "2006-01-02T15:04:05Z"}}
+          --cache-from type=registry,ref=fizzbuzz2/oci-storage:buildcache
+          --cache-to type=registry,ref=fizzbuzz2/oci-storage:buildcache,mode=max
           -t fizzbuzz2/oci-storage:v{{.NEW_VERSION}}
           --push .
       - 'sed -i "" "s/^version: .*/version: {{.NEW_VERSION}}/" helm/Chart.yaml'
       - 'sed -i "" "s/^appVersion: .*/appVersion: \"{{.NEW_VERSION}}\"/" helm/Chart.yaml'
-      - 'sed -i "" "s/tag: .*/tag: \"v{{.NEW_VERSION}}\"/" helm/values.yaml'
+      # Replace ONLY the app image tag (matches the line under image: with "v" prefix);
+      # avoids clobbering other tag fields like redis.image.tag or trivy.image.tag.
+      - 'sed -i "" "s/^  tag: \"v[0-9].*$/  tag: \"v{{.NEW_VERSION}}\"/" helm/values.yaml'
       - git add helm/Chart.yaml helm/values.yaml
       - git commit -m "chore{{":"}} release v{{.NEW_VERSION}}"
       - git tag v{{.NEW_VERSION}}

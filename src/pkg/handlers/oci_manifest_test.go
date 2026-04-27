@@ -39,7 +39,7 @@ func setupManifestTestEnv(t *testing.T) (*fiber.App, *MockChartService, *MockIma
 	cfg := &config.Config{}
 	cfg.Storage.Path = tempDir
 
-	handler := NewOCIHandler(mockChartService, mockImageService, nil, nil, cfg, log, pathManager, backend, &coordination.NoopUploadTracker{})
+	handler := NewOCIHandler(mockChartService, mockImageService, nil, nil, cfg, log, pathManager, backend, &coordination.NoopUploadTracker{}, &coordination.NoopLockManager{})
 	app := fiber.New()
 
 	cleanup := func() {

@@ -1,0 +1,131 @@
+{{- /*
+  Embedded Redis (StatefulSet, single-instance) for distributed coordination:
+  - LockManager (index updates, scan decisions, GC)
+  - UploadTracker (chunked upload pod-affinity)
+  - ScanTracker (cross-replica scan dedup)
+  - Single-flight on proxy blob downloads
+
+  Single instance is acceptable: state is short-lived (TTL-based locks). If Redis
+  restarts, in-flight locks expire and operations retry — no data loss because
+  the source of truth (blobs/manifests) is on the shared backend (NFS/S3).
+
+  Enable via redis.deploy=true. The chart wires the app to redis.svc automatically
+  by overriding redis.addr to "{{ .Release.Name }}-redis:6379".
+*/}}
+{{- if and .Values.redis.enabled .Values.redis.deploy }}
+{{- $redisName := printf "%s-redis" .Release.Name -}}
+{{- $hasPassword := and .Values.redis.auth .Values.redis.auth.password -}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $redisName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "application.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis
+      protocol: TCP
+  selector:
+    {{- include "application.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+{{- if $hasPassword }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $redisName }}-auth
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "application.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+type: Opaque
+stringData:
+  REDIS_PASSWORD: {{ .Values.redis.auth.password | quote }}
+{{- end }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $redisName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "application.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+spec:
+  serviceName: {{ $redisName }}
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "application.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: redis
+  template:
+    metadata:
+      labels:
+        {{- include "application.labels" . | nindent 8 }}
+        app.kubernetes.io/component: redis
+      annotations:
+        oci-portal-skip: "true"
+    spec:
+      terminationGracePeriodSeconds: 10
+      containers:
+        - name: redis
+          image: {{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag }}
+          imagePullPolicy: {{ .Values.redis.image.pullPolicy | default "IfNotPresent" }}
+          command:
+            - redis-server
+            - --save
+            - ""
+            - --appendonly
+            - "no"
+            - --maxmemory
+            - {{ .Values.redis.maxmemory | default "256mb" | quote }}
+            - --maxmemory-policy
+            - "allkeys-lru"
+          {{- if $hasPassword }}
+            - --requirepass
+            - "$(REDIS_PASSWORD)"
+          {{- end }}
+          ports:
+            - name: redis
+              containerPort: 6379
+              protocol: TCP
+          {{- if $hasPassword }}
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $redisName }}-auth
+                  key: REDIS_PASSWORD
+          {{- end }}
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: {{ .Values.redis.memoryLimit | default "512Mi" | quote }}
+          livenessProbe:
+            tcpSocket:
+              port: redis
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                {{- if $hasPassword }}
+                - "redis-cli -a $REDIS_PASSWORD --no-auth-warning ping | grep PONG"
+                {{- else }}
+                - "redis-cli ping | grep PONG"
+                {{- end }}
+            initialDelaySeconds: 2
+            periodSeconds: 5
+{{- end }}

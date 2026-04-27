@@ -101,6 +101,7 @@ func setupHandlers(
 	pathManager *utils.PathManager,
 	backend storage.Backend,
 	uploadTracker coordination.UploadTracker,
+	locker coordination.LockManager,
 	cfg *config.Config,
 	backupService *service.BackupService,
 	log *utils.Logger,
@@ -108,7 +109,7 @@ func setupHandlers(
 ) (*handlers.HelmHandler, *handlers.ImageHandler, *handlers.OCIHandler, *handlers.ConfigHandler, *handlers.IndexHandler, *handlers.BackupHandler, *handlers.CacheHandler, *handlers.GCHandler, *handlers.ScanHandler) {
 	helmHandler := handlers.NewHelmHandler(chartService, pathManager, log, backend)
 	imageHandler := handlers.NewImageHandler(imageService, proxyService, pathManager, log)
-	ociHandler := handlers.NewOCIHandler(chartService, imageService, proxyService, scanService, cfg, log, pathManager, backend, uploadTracker)
+	ociHandler := handlers.NewOCIHandler(chartService, imageService, proxyService, scanService, cfg, log, pathManager, backend, uploadTracker, locker)
 	configHandler := handlers.NewConfigHandler(cfg, log)
 	indexHandler := handlers.NewIndexHandler(chartService, pathManager, log, backend)
 	backupHandler := handlers.NewBackupHandler(backupService, log, cfg)
@@ -203,6 +204,7 @@ func main() {
 		pathManager,
 		backend,
 		uploadTracker,
+		locker,
 		cfg,
 		backupService,
 		log,
