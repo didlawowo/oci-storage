@@ -67,7 +67,8 @@ serviceAccount:
   create: true
   name: oci-storage
   annotations: {}
-nodeSelector: {} # no hard node-pin: anti-affinity below spreads replicas across nodes
+nodeSelector:
+  kubernetes.io/arch: amd64 # image fizzbuzz2/oci-storage built amd64-only; exclude arm64 nodes
 tolerations: []
 # Anti-affinity: never schedule 2 replicas on the same node (avoids losing both pods if a node dies)
 affinity:
@@ -175,7 +176,7 @@ readinessProbe:
   successThreshold: 1
   failureThreshold: 3
 ingress:
-  host: oci-storage.example.com
+  host: oci-storage.dc-tech.work
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-cloudflare
   tls:

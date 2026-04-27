@@ -42,6 +42,8 @@ spec:
                 - cnpg-system
                 - security
                 - longhorn-system
+                - oci-storage   # ne JAMAIS réécrire les pods d'oci-storage = boucle de bootstrap
+                - kube-infra    # Argo/Traefik/external-dns dépendent indirectement d'oci-storage
       mutate:
         foreach:
           - list: "request.object.spec.containers"
@@ -79,6 +81,8 @@ spec:
                 - cnpg-system
                 - security
                 - longhorn-system
+                - oci-storage   # ne JAMAIS réécrire les pods d'oci-storage = boucle de bootstrap
+                - kube-infra    # Argo/Traefik/external-dns dépendent indirectement d'oci-storage
       preconditions:
         all:
           - key: "{{ `{{ request.object.spec.initContainers[] || ` }}{{ "`[]`" }}{{ ` | length(@) }}` }}"

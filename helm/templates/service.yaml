@@ -7,7 +7,12 @@ metadata:
   labels: {{- include "application.labels" . | nindent 4 }}
   namespace: {{ .Release.Namespace }}
 spec:
-  selector: {{- include "application.selectorLabels" . | nindent 4 }}
+  # IMPORTANT: include component=server pour exclure le pod Redis qui partage les mêmes
+  # selectorLabels (instance+name). Sans ce filtre, le Service round-robin envoie 1/3 du
+  # trafic vers Redis sur :3030 → 502.
+  selector:
+    {{- include "application.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: server
   ports:
   - name: {{ .Values.service.portName }}
     targetPort: {{ .Values.service.targetPort }}

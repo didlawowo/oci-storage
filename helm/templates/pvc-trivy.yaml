@@ -1,4 +1,8 @@
-{{- if and .Values.trivy.enabled .Values.trivy.dbVolume.enabled }}
+{{- /*
+  Trivy DB cache PVC. RWO Longhorn = un seul mounter, donc on skip le PVC
+  quand replicas > 1 (le Deployment fallback sur emptyDir par-pod).
+*/}}
+{{- if and .Values.trivy.enabled .Values.trivy.dbVolume.enabled (le (int .Values.replicas) 1) }}
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:

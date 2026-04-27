@@ -7,10 +7,45 @@
 */}}
 {{- $useTraefikRoute := and (eq .Values.ingress.ingressClassName "traefik") (gt (int .Values.replicas) 1) -}}
 {{- if $useTraefikRoute }}
+# DNS-only Ingress so external-dns publishes the record (it doesn't read IngressRoute).
+# Routing is handled by the IngressRoute below.
+# Name = release name (NOT "-dns" suffix) to keep external-dns TXT ownership record stable.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Release.Name | quote }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    app: {{ .Release.Name | quote }}
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: {{ .Values.ingress.host | quote }}
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.ingressClassName }}
+  rules:
+    - host: {{ .Values.ingress.host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Values.service.name }}
+                port:
+                  number: {{ .Values.service.port }}
+{{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host }}
+      secretName: {{ .Values.ingress.tls.secretName | default (printf "%s-certificate-tls" .Release.Name) }}
+{{- end }}
+---
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
-  name: {{ .Release.Name | quote }}
+  name: {{ printf "%s-route" .Release.Name | quote }}
   namespace: {{ .Release.Namespace | quote }}
   labels:
     app: {{ .Release.Name | quote }}
@@ -32,8 +67,12 @@ spec:
         - name: {{ .Release.Name }}-buffering
           namespace: {{ .Release.Namespace }}
       services:
-        - name: {{ .Release.Name }}-sticky-svc
-          kind: TraefikService
+        # Direct Service reference: stickiness is provided by sessionAffinity:ClientIP
+        # on the K8s Service (works with `docker push`, unlike cookie sticky).
+        - name: {{ .Values.service.name }}
+          port: {{ .Values.service.port }}
+          kind: Service
+          passHostHeader: true
 {{- if .Values.ingress.tls.enabled }}
   tls:
     secretName: {{ .Values.ingress.tls.secretName | default (printf "%s-certificate-tls" .Release.Name) }}

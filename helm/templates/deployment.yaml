@@ -89,7 +89,8 @@ spec:
               value: "true"
             - name: REDIS_ADDR
               {{- if .Values.redis.deploy }}
-              value: "{{ .Release.Name }}-redis:6379"
+              # FQDN complet pour éviter les soucis de résolution short-name (ndots/search domains)
+              value: "{{ .Release.Name }}-redis.{{ .Release.Namespace }}.svc.cluster.local:6379"
               {{- else }}
               value: {{ .Values.redis.addr | quote }}
               {{- end }}
@@ -199,10 +200,18 @@ spec:
           persistentVolumeClaim:
             claimName: oci-storage-data
       {{- end }}
-      {{- if and .Values.trivy.enabled .Values.trivy.dbVolume.enabled }}
+      {{- if .Values.trivy.enabled }}
+        {{- if and .Values.trivy.dbVolume.enabled (le (int .Values.replicas) 1) }}
         - name: trivy-db
           persistentVolumeClaim:
             claimName: oci-storage-trivy-db
+        {{- else }}
+        # Cache Trivy en emptyDir : RWO PVC ne peut pas être partagé entre replicas.
+        # La DB Trivy (~600MB) se re-télécharge au démarrage.
+        - name: trivy-db
+          emptyDir:
+            sizeLimit: 2Gi
+        {{- end }}
       {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector: {{- toYaml . | nindent 8 }}

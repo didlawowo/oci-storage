@@ -1,33 +1,18 @@
 {{- /*
   Traefik middlewares for HA mode:
-  - sticky cookie : pin client to one replica for the duration of a chunked upload
   - buffering    : allow up to 10 GB request body (large blob pushes)
   - request timeouts handled at Traefik entrypoint level (cluster-wide)
+
+  Stickiness for chunked OCI uploads is handled at the K8s Service level via
+  sessionAffinity: ClientIP (see service.yaml). Cookie-based stickiness does not
+  work with `docker push` because the Docker CLI does not store cookies between
+  requests. ClientIP affinity pins each Traefik pod's connections to the same
+  backend replica, which is sufficient for upload session continuity.
 
   Created when replicas > 1 OR ingress.traefik.sticky=true.
   Skipped if ingressClassName is not "traefik".
 */}}
 {{- if and (eq .Values.ingress.ingressClassName "traefik") (or (gt (int .Values.replicas) 1) (and .Values.ingress.traefik .Values.ingress.traefik.sticky)) }}
----
-# TraefikService with cookie sticky: pins client to one replica for chunked uploads.
-# Combined with sessionAffinity:ClientIP on the K8s Service for intra-cluster traffic.
-apiVersion: traefik.io/v1alpha1
-kind: TraefikService
-metadata:
-  name: {{ .Release.Name }}-sticky-svc
-  namespace: {{ .Release.Namespace }}
-  labels: {{- include "application.labels" . | nindent 4 }}
-spec:
-  weighted:
-    services:
-      - name: {{ .Values.service.name }}
-        port: {{ .Values.service.port }}
-        sticky:
-          cookie:
-            name: oci-storage-affinity
-            secure: {{ .Values.ingress.tls.enabled }}
-            httpOnly: true
-            sameSite: lax
 ---
 apiVersion: traefik.io/v1alpha1
 kind: Middleware

@@ -37,6 +37,30 @@ tasks:
     cmds:
     - helm template . --debug -f values/home/values.yaml > rendered.yaml
 
+  helm-deploy:
+    desc: 'Deploy oci-storage via Helm (infra-tier service, bypasses ArgoCD). NS=oci-storage REL=oci-storage. Uses helm/values.yaml only.'
+    vars:
+      NS: '{{.NS | default "oci-storage"}}'
+      REL: '{{.REL | default "oci-storage"}}'
+    cmds:
+      - echo "Deploying {{.REL}} into namespace {{.NS}} from ./helm"
+      - helm upgrade --install {{.REL}} ./helm
+          --namespace {{.NS}}
+          --create-namespace
+          --history-max 5
+          --wait
+          --timeout 5m
+      - echo "✓ Deployed. Watch with{{":"}} kubectl get pods -n {{.NS}} -w"
+
+  helm-uninstall:
+    desc: Uninstall oci-storage release (keeps namespace + NFS PV with retain policy)
+    vars:
+      NS: '{{.NS | default "oci-storage"}}'
+      REL: '{{.REL | default "oci-storage"}}'
+    cmds:
+      - helm uninstall {{.REL}} --namespace {{.NS}}
+      - echo "✓ Release uninstalled. NFS PV (Retain) and data on NAS remain intact."
+
   test-unit:
     desc: Run Go unit tests
     dir: src
