@@ -299,7 +299,7 @@ trivy:
   enabled: true
   image:
     repository: aquasec/trivy
-    tag: "v1.8.0"
+    tag: "0.69.3"
     pullPolicy: IfNotPresent
   resources:
     requests:
