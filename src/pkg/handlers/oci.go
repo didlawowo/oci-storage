@@ -42,6 +42,7 @@ type OCIHandler struct {
 	pathManager   *utils.PathManager
 	backend       storage.Backend
 	uploadTracker coordination.UploadTracker
+	locker        coordination.LockManager
 	config        *config.Config
 }
 
@@ -55,6 +56,7 @@ func NewOCIHandler(
 	pm *utils.PathManager,
 	backend storage.Backend,
 	uploadTracker coordination.UploadTracker,
+	locker coordination.LockManager,
 ) *OCIHandler {
 	return &OCIHandler{
 		chartService:  chartService,
@@ -66,6 +68,7 @@ func NewOCIHandler(
 		pathManager:   pm,
 		backend:       backend,
 		uploadTracker: uploadTracker,
+		locker:        locker,
 	}
 }
 

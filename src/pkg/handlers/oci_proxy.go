@@ -43,12 +43,43 @@ func (h *OCIHandler) calculateBlobTimeout(sizeBytes int64) time.Duration {
 	return timeout
 }
 
-// proxyBlob fetches a blob from upstream, caches it completely, then serves from cache
+// proxyBlob fetches a blob from upstream, caches it completely, then serves from cache.
+// Uses a distributed lock (Redis when enabled) to deduplicate concurrent pulls of the same
+// blob across replicas — critical for HA mode to avoid 2 pods downloading the same multi-GB
+// layer in parallel and racing on the temp+rename of the final blob path.
 func (h *OCIHandler) proxyBlob(c *fiber.Ctx, name, digest string) error {
 	// Check if blob is already cached before doing anything
 	blobPath := h.pathManager.GetBlobPath(digest)
 	if exists, _ := h.backend.Exists(blobPath); exists {
 		h.log.WithField("digest", digest).Debug("Blob already cached, serving from cache")
+		c.Set("Docker-Content-Digest", digest)
+		c.Set("Content-Type", "application/octet-stream")
+		return h.sendBlob(c, blobPath)
+	}
+
+	// Cross-pod single-flight: only one replica downloads a given digest at a time.
+	// Other replicas wait by polling the blob path (the lock holder will write it via Import).
+	// With NoopLockManager (single-replica mode) the Acquire is a no-op pass-through.
+	initialTimeout := time.Duration(h.config.Proxy.Timeout.MaxTimeoutMinutes) * time.Minute
+	lockCtx, lockCancel := context.WithTimeout(context.Background(), initialTimeout)
+	defer lockCancel()
+
+	lockKey := "proxy-blob:" + digest
+	unlock, lockErr := h.locker.Acquire(lockCtx, lockKey, initialTimeout)
+	if lockErr != nil {
+		// Another pod owns the download. Wait for the blob to appear (or for client to give up).
+		h.log.WithFields(logrus.Fields{
+			"digest": digest,
+			"err":    lockErr.Error(),
+		}).Debug("Proxy blob lock held by another replica, waiting for cached result")
+		return h.waitForProxiedBlob(c, digest, blobPath, initialTimeout)
+	}
+	defer unlock()
+
+	// Re-check after acquiring the lock: another pod may have completed the download
+	// while we were waiting in the queue.
+	if exists, _ := h.backend.Exists(blobPath); exists {
+		h.log.WithField("digest", digest).Debug("Blob cached by another replica during lock wait, serving from cache")
 		c.Set("Docker-Content-Digest", digest)
 		c.Set("Content-Type", "application/octet-stream")
 		return h.sendBlob(c, blobPath)
@@ -68,7 +99,6 @@ func (h *OCIHandler) proxyBlob(c *fiber.Ctx, name, digest string) error {
 
 	// Calculate dynamic timeout based on estimated blob size (use max timeout for initial fetch)
 	// We use a generous initial timeout to establish connection and get the size header
-	initialTimeout := time.Duration(h.config.Proxy.Timeout.MaxTimeoutMinutes) * time.Minute
 	ctx, cancel := context.WithTimeout(context.Background(), initialTimeout)
 	defer cancel()
 
@@ -178,6 +208,34 @@ func (h *OCIHandler) proxyBlob(c *fiber.Ctx, name, digest string) error {
 	c.Set("Docker-Content-Digest", digest)
 	c.Set("Content-Type", "application/octet-stream")
 	return h.sendBlob(c, blobPath)
+}
+
+// waitForProxiedBlob polls for a blob written by another replica that holds the proxy lock.
+// Returns the blob from cache when it appears, or 504 if the wait exceeds maxWait
+// or if the client cancels the request.
+func (h *OCIHandler) waitForProxiedBlob(c *fiber.Ctx, digest, blobPath string, maxWait time.Duration) error {
+	deadline := time.Now().Add(maxWait)
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for time.Now().Before(deadline) {
+		if exists, _ := h.backend.Exists(blobPath); exists {
+			h.log.WithField("digest", digest).Info("Proxied blob became available from peer replica, serving from cache")
+			c.Set("Docker-Content-Digest", digest)
+			c.Set("Content-Type", "application/octet-stream")
+			return h.sendBlob(c, blobPath)
+		}
+		select {
+		case <-ticker.C:
+			// keep polling
+		case <-c.Context().Done():
+			h.log.WithField("digest", digest).Warn("Client cancelled while waiting for peer-replica proxy download")
+			return c.SendStatus(499)
+		}
+	}
+
+	h.log.WithField("digest", digest).Warn("Timeout waiting for peer-replica proxy download")
+	return c.SendStatus(504)
 }
 
 // proxyManifest fetches a manifest from upstream and caches it

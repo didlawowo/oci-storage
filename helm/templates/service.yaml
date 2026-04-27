@@ -14,3 +14,15 @@ spec:
     port: {{ .Values.service.port }}
     protocol: TCP
   type: {{ .Values.service.type }}
+  {{- /*
+    Sticky session by client IP — required for chunked OCI uploads (POST→PATCH→PUT)
+    when running multiple replicas. The UploadTracker rejects PATCH requests routed
+    to the wrong pod; without affinity ~50% of multi-chunk pushes return 409.
+    Auto-enabled when replicas > 1 OR explicitly via service.sessionAffinity.
+  */}}
+  {{- if or (gt (int .Values.replicas) 1) .Values.service.sessionAffinity }}
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: {{ .Values.service.sessionAffinityTimeoutSeconds | default 10800 }}
+  {{- end }}

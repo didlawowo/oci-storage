@@ -1,4 +1,41 @@
 {{- if not .Values.s3.enabled }}
+{{- /*
+  Storage backend selection:
+  - s3.enabled=true  : no PVC at all (handled in deployment.yaml).
+  - nfs.enabled=true : provision a static PV bound to the NFS export, plus a dedicated
+                       no-provisioner StorageClass; the PVC requests RWX against it.
+  - else             : default behavior (RWO PVC on the cluster default StorageClass / Longhorn).
+*/}}
+{{- if and .Values.nfs.enabled .Values.nfs.createPV }}
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: {{ .Values.nfs.storageClassName }}
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: Immediate
+reclaimPolicy: {{ .Values.nfs.reclaimPolicy | default "Retain" }}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ .Release.Name }}-nfs-pv
+  labels: {{- include "application.labels" . | nindent 4 }}
+spec:
+  capacity:
+    storage: {{ .Values.nfs.capacity }}
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: {{ .Values.nfs.reclaimPolicy | default "Retain" }}
+  storageClassName: {{ .Values.nfs.storageClassName }}
+  {{- with .Values.nfs.mountOptions }}
+  mountOptions:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  nfs:
+    server: {{ .Values.nfs.server | quote }}
+    path: {{ .Values.nfs.path | quote }}
+{{- end }}
 {{- range .Values.persistentVolumesClaims }}
 ---
 apiVersion: v1
@@ -9,10 +46,16 @@ metadata:
   namespace: {{ $.Release.Namespace }}
 spec:
   accessModes:
+    {{- if $.Values.nfs.enabled }}
+    - ReadWriteMany
+    {{- else }}
     {{- range .accessModes }}
     - {{ . }}
     {{- end }}
-  {{- if .storageClassName }}
+    {{- end }}
+  {{- if $.Values.nfs.enabled }}
+  storageClassName: {{ $.Values.nfs.storageClassName }}
+  {{- else if .storageClassName }}
   storageClassName: {{ .storageClassName }}
   {{- end }}
   resources:

@@ -13,7 +13,7 @@ spec:
     matchLabels:
       {{- include "application.selectorLabels" . | nindent 6 }}
       app.kubernetes.io/component: server
-  {{- if .Values.s3.enabled }}
+  {{- if or .Values.s3.enabled .Values.nfs.enabled (gt (int .Values.replicas) 1) }}
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -37,6 +37,7 @@ spec:
     spec:
       serviceAccountName: {{  .Values.serviceAccount.name }}
       {{- if not .Values.s3.enabled }}
+      # initContainer prepares the data dir tree on local PVC or NFS RWX
       initContainers: {{- toYaml .Values.initContainers | nindent 8 }}
       {{- end }}
       containers:
@@ -87,10 +88,20 @@ spec:
             - name: REDIS_ENABLED
               value: "true"
             - name: REDIS_ADDR
+              {{- if .Values.redis.deploy }}
+              value: "{{ .Release.Name }}-redis:6379"
+              {{- else }}
               value: {{ .Values.redis.addr | quote }}
+              {{- end }}
             - name: REDIS_DB
               value: {{ .Values.redis.db | quote }}
-            {{- if .Values.redis.existingSecret }}
+            {{- if and .Values.redis.deploy .Values.redis.auth .Values.redis.auth.password }}
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: "{{ .Release.Name }}-redis-auth"
+                  key: REDIS_PASSWORD
+            {{- else if .Values.redis.existingSecret }}
             - name: REDIS_PASSWORD
               valueFrom:
                 secretKeyRef:

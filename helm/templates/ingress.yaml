@@ -1,3 +1,44 @@
+{{- /*
+  Two ingress modes:
+  1. Standard Ingress (single replica or replicas==1): plain Service backend.
+  2. Traefik IngressRoute (replicas > 1 + traefik): routes through TraefikService
+     with cookie sticky + buffering middleware. Required because the K8s standard
+     Ingress object cannot reference a Traefik TraefikService directly.
+*/}}
+{{- $useTraefikRoute := and (eq .Values.ingress.ingressClassName "traefik") (gt (int .Values.replicas) 1) -}}
+{{- if $useTraefikRoute }}
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: {{ .Release.Name | quote }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    app: {{ .Release.Name | quote }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  entryPoints:
+    {{- if .Values.ingress.tls.enabled }}
+    - websecure
+    {{- else }}
+    - web
+    {{- end }}
+  routes:
+    - match: Host(`{{ .Values.ingress.host }}`)
+      kind: Rule
+      middlewares:
+        - name: {{ .Release.Name }}-buffering
+          namespace: {{ .Release.Namespace }}
+      services:
+        - name: {{ .Release.Name }}-sticky-svc
+          kind: TraefikService
+{{- if .Values.ingress.tls.enabled }}
+  tls:
+    secretName: {{ .Values.ingress.tls.secretName | default (printf "%s-certificate-tls" .Release.Name) }}
+{{- end }}
+{{- else }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -27,4 +68,5 @@ spec:
   - hosts:
     - {{ $.Values.ingress.host }}
     secretName: {{ $.Values.ingress.tls.secretName | default (printf "%s-certificate-tls" $.Release.Name) }}
+{{- end }}
 {{- end }}
