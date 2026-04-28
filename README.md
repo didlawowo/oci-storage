@@ -238,3 +238,52 @@ docker pull oci-storage.example.com/proxy/docker.io/library/nginx:latest
 
 # Or configure containerd/docker to use as mirror
 ```
+
+## 🔁 High Availability (multi-replica)
+
+For HA deployments (`replicas > 1`), oci-storage relies on **shared storage**
+(NFS / RWX PVC) so that any replica can serve any request — including resuming
+a chunked upload started on a different pod.
+
+### Architecture
+
+`docker push` (and `helm push`) sends a chunked upload as a sequence of
+`POST → PATCH → PATCH → … → PUT` requests. Each request creates a new TCP
+connection and may land on a different replica. Because the upload temp file
+lives at `data/temp/{uuid}` on the shared volume, **any replica can append to
+it and finalize the blob** — no session affinity required.
+
+| Layer | Role |
+|---|---|
+| Shared PVC (NFS / RWX) | All replicas read/write `data/temp`, `data/blobs`, `data/manifests`. An upload started on pod A can be completed by pod B. |
+| Redis (optional) | Tracks `upload_uuid → pod_id` for observability/debug. Mismatches are logged at debug level, **never rejected** — the previous 409 behavior was removed. |
+| Traefik IngressRoute | Routes directly to the K8s Service. The buffering middleware allows up to 10 GB request bodies. No sticky-cookie middleware (Docker CLI does not store cookies anyway). |
+
+### Enabling HA mode
+
+```yaml
+# values.yaml
+replicas: 3
+
+redis:
+  deploy: true   # optional: deploys an in-cluster Redis for upload tracking
+  # OR: deploy: false + redis.addr: "external-redis.svc:6379"
+
+# Storage MUST be RWX (NFS, CephFS, Longhorn RWX, …) for HA mode.
+persistence:
+  storageClass: nfs-csi
+  accessModes: [ReadWriteMany]
+```
+
+### Caveats
+
+- **RWO storage is not supported in HA mode**: with a `ReadWriteOnce` PVC, only
+  one pod can mount the volume — the others will be stuck `Pending`. Use NFS,
+  CephFS, or any RWX-capable storage class.
+- **Trivy DB cache**: in HA mode, the Trivy DB volume falls back to `emptyDir`
+  (a single RWO PVC cannot be shared). Each pod re-downloads the ~600 MB DB on
+  startup. To avoid this, point Trivy at an external server via
+  `trivy.serverURL`.
+- **NFS atomicity**: clients only send PATCH requests sequentially per upload
+  UUID, so the `O_APPEND` writes do not race. Concurrent PATCH on the same UUID
+  is not part of the OCI upload protocol.

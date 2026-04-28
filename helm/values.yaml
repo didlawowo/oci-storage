@@ -4,7 +4,7 @@ podAnnotations:
   oci-portal-skip: "true"
 image:
   repository: fizzbuzz2/oci-storage
-  tag: "v1.8.0"
+  tag: "062637e"
   pullPolicy: "Always"
   pullSecrets: []
 strategy:
@@ -74,27 +74,27 @@ tolerations: []
 affinity:
   podAntiAffinity:
     requiredDuringSchedulingIgnoredDuringExecution:
-      - labelSelector:
-          matchExpressions:
-            - key: app.kubernetes.io/component
-              operator: In
-              values: [server]
-        topologyKey: kubernetes.io/hostname
+    - labelSelector:
+        matchExpressions:
+        - key: app.kubernetes.io/component
+          operator: In
+          values: [ server ]
+      topologyKey: kubernetes.io/hostname
 initContainers:
-  - name: init-data-dir
-    image: busybox
-    # NFS RWX with all_squash maps writes to anonuid=1024, so chown is a no-op.
-    # Just mkdir is enough; skip recursive chown to avoid traversing existing data on every boot.
-    command:
-      - sh
-      - -c
-      - |
-        set -e
-        mkdir -p /app/data/temp /app/data/blobs /app/data/manifests /app/data/charts /app/data/scan-results /app/data/scan-decisions
-        echo "Directories ready"
-    volumeMounts:
-      - name: data-volume
-        mountPath: /app/data
+- name: init-data-dir
+  image: busybox
+  # NFS RWX with all_squash maps writes to anonuid=1024, so chown is a no-op.
+  # Just mkdir is enough; skip recursive chown to avoid traversing existing data on every boot.
+  command:
+  - sh
+  - -c
+  - |
+    set -e
+    mkdir -p /app/data/temp /app/data/blobs /app/data/manifests /app/data/charts /app/data/scan-results /app/data/scan-decisions
+    echo "Directories ready"
+  volumeMounts:
+  - name: data-volume
+    mountPath: /app/data
 resources:
   limits:
     cpu: 2000m
@@ -106,16 +106,16 @@ resources:
 # NOTE: when nfs.enabled=true, accessModes is forced to RWX and storageClassName is overridden
 # by the chart (see templates/pvc.yaml).
 persistentVolumesClaims:
-  - name: oci-storage-data
-    accessModes:
-      - ReadWriteMany
-    storageClassName: nfs-oci-storage
-    size: 200Gi
+- name: oci-storage-data
+  accessModes:
+  - ReadWriteMany
+  storageClassName: nfs-oci-storage
+  size: 200Gi
 application:
   ports:
-    - name: http
-      containerPort: 3030
-      protocol: TCP
+  - name: http
+    containerPort: 3030
+    protocol: TCP
   containerName: oci-storage
   command: []
   args: []
@@ -137,23 +137,23 @@ secrets:
   #   - name: auth
   #     path: values/home/secrets/auth.yaml
 volumeMounts:
-  - name: config-volume
-    mountPath: /app/config # Répertoire entier
-    readOnly: true
-  - name: data-volume
-    mountPath: /app/data
+- name: config-volume
+  mountPath: /app/config # Répertoire entier
+  readOnly: true
+- name: data-volume
+  mountPath: /app/data
 volumes:
-  - name: config-volume
-    projected:
-      sources:
-        - configMap:
-            name: oci-storage-config
-            items:
-              - key: config.yaml
-                path: config.yaml
-  - name: data-volume
-    persistentVolumeClaim:
-      claimName: oci-storage-data
+- name: config-volume
+  projected:
+    sources:
+    - configMap:
+        name: oci-storage-config
+        items:
+        - key: config.yaml
+          path: config.yaml
+- name: data-volume
+  persistentVolumeClaim:
+    claimName: oci-storage-data
 # probes — tolerant for IO-heavy workloads (large blob streams may delay /health response)
 livenessProbe:
   httpGet:
@@ -189,80 +189,80 @@ ingress:
   traefik:
     sticky: false # forced true when replicas > 1
 env:
-  - name: ENV
-    value: production
-  # Configuration via variables d'environnement
-  - name: SERVER_PORT
-    value: "3030"
-  - name: LOG_LEVEL
-    value: "info"
-  # Proxy timeout overrides — generous caps for ML model layers (multi-GB)
-  - name: PROXY_TIMEOUT_MAX_MINUTES
-    value: "90"
-  - name: PROXY_TIMEOUT_BLOB_PER_GB
-    value: "60"
-  # Auth configuration - Option 1: Variable unique avec liste
-  # Temporaire pour test - à remplacer par secret en production
-  - name: HELM_USERS
-    # Auth configuration - Choisir UNE des 3 options :
+- name: ENV
+  value: production
+# Configuration via variables d'environnement
+- name: SERVER_PORT
+  value: "3030"
+- name: LOG_LEVEL
+  value: "info"
+# Proxy timeout overrides — generous caps for ML model layers (multi-GB)
+- name: PROXY_TIMEOUT_MAX_MINUTES
+  value: "90"
+- name: PROXY_TIMEOUT_BLOB_PER_GB
+  value: "60"
+# Auth configuration - Option 1: Variable unique avec liste
+# Temporaire pour test - à remplacer par secret en production
+- name: HELM_USERS
+  # Auth configuration - Choisir UNE des 3 options :
 
-    value: "admin:secret123,dev:devpass,readonly:readpass"
-  # Registry credentials for proxy (loaded from secrets)
-  - name: GHCR_USERNAME
-    # Backup configuration (si activé)
-    # - name: BACKUP_ENABLED
-    #   value: "true"
-    # - name: BACKUP_PROVIDER
-    #   value: "aws"  # ou "gcp" ou "azure"
+  value: "admin:secret123,dev:devpass,readonly:readpass"
+# Registry credentials for proxy (loaded from secrets)
+- name: GHCR_USERNAME
+  # Backup configuration (si activé)
+  # - name: BACKUP_ENABLED
+  #   value: "true"
+  # - name: BACKUP_PROVIDER
+  #   value: "aws"  # ou "gcp" ou "azure"
 
-    # Azure config
-    # - name: AZURE_STORAGE_ACCOUNT
-    #   value: "helmportalbackup"
-    # - name: AZURE_CONTAINER
-    #   value: "backup"
-    # - name: AZURE_STORAGE_ACCOUNT_KEY
-    #   value: "your-storage-key"
+  # Azure config
+  # - name: AZURE_STORAGE_ACCOUNT
+  #   value: "helmportalbackup"
+  # - name: AZURE_CONTAINER
+  #   value: "backup"
+  # - name: AZURE_STORAGE_ACCOUNT_KEY
+  #   value: "your-storage-key"
 
-    # GCP config  
-    # - name: GCP_BUCKET
-    #   value: "oci-storage-backup"
-    # - name: GCP_PROJECT_ID
-    #   value: "your-project-id"
-    # - name: GCP_CREDENTIALS_FILE
-    #   value: "/path/to/credentials.json"
+  # GCP config  
+  # - name: GCP_BUCKET
+  #   value: "oci-storage-backup"
+  # - name: GCP_PROJECT_ID
+  #   value: "your-project-id"
+  # - name: GCP_CREDENTIALS_FILE
+  #   value: "/path/to/credentials.json"
 
-    # AWS config
-    # - name: AWS_BUCKET
-    #   value: "oci-storage-backup"
-    # - name: AWS_REGION
-    #   value: "eu-west-1"
-    # - name: AWS_ACCESS_KEY_ID
-    #   value: "your-access-key"
-    # - name: AWS_SECRET_ACCESS_KEY
-    #   value: "your-secret-key"
-    valueFrom:
-      secretKeyRef:
-        name: ghcr-credentials
-        key: username
-        optional: true
-  - name: GHCR_PASSWORD
-    valueFrom:
-      secretKeyRef:
-        name: ghcr-credentials
-        key: password
-        optional: true
-  - name: DOCKERHUB_USERNAME
-    valueFrom:
-      secretKeyRef:
-        name: dockerhub-credentials
-        key: username
-        optional: true
-  - name: DOCKERHUB_PASSWORD
-    valueFrom:
-      secretKeyRef:
-        name: dockerhub-credentials
-        key: password
-        optional: true
+  # AWS config
+  # - name: AWS_BUCKET
+  #   value: "oci-storage-backup"
+  # - name: AWS_REGION
+  #   value: "eu-west-1"
+  # - name: AWS_ACCESS_KEY_ID
+  #   value: "your-access-key"
+  # - name: AWS_SECRET_ACCESS_KEY
+  #   value: "your-secret-key"
+  valueFrom:
+    secretKeyRef:
+      name: ghcr-credentials
+      key: username
+      optional: true
+- name: GHCR_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: ghcr-credentials
+      key: password
+      optional: true
+- name: DOCKERHUB_USERNAME
+  valueFrom:
+    secretKeyRef:
+      name: dockerhub-credentials
+      key: username
+      optional: true
+- name: DOCKERHUB_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: dockerhub-credentials
+      key: password
+      optional: true
 envFrom: []
 # Secret pour les credentials d'authentification (activer après création du secret)
 # - secretRef:
@@ -300,7 +300,7 @@ trivy:
   enabled: true
   image:
     repository: aquasec/trivy
-    tag: "0.69.3"
+    tag: "0.70.0"
     pullPolicy: IfNotPresent
   resources:
     requests:
@@ -337,30 +337,30 @@ config:
     cache:
       maxSizeGB: 100
     registries:
-      - name: "docker.io"
-        url: "https://registry-1.docker.io"
-        default: true
-      - name: "registry-1.docker.io"
-        url: "https://registry-1.docker.io"
-      - name: "ghcr.io"
-        url: "https://ghcr.io"
-        # Credentials loaded from environment variables GHCR_USERNAME and GHCR_PASSWORD
-      - name: "gcr.io"
-        url: "https://gcr.io"
-      - name: "eu.gcr.io"
-        url: "https://eu.gcr.io"
-      - name: "us.gcr.io"
-        url: "https://us.gcr.io"
-      - name: "asia.gcr.io"
-        url: "https://asia.gcr.io"
-      - name: "quay.io"
-        url: "https://quay.io"
-      - name: "registry.k8s.io"
-        url: "https://registry.k8s.io"
-      - name: "nvcr.io"
-        url: "https://nvcr.io"
-      - name: "code.forgejo.org"
-        url: "https://code.forgejo.org"
+    - name: "docker.io"
+      url: "https://registry-1.docker.io"
+      default: true
+    - name: "registry-1.docker.io"
+      url: "https://registry-1.docker.io"
+    - name: "ghcr.io"
+      url: "https://ghcr.io"
+      # Credentials loaded from environment variables GHCR_USERNAME and GHCR_PASSWORD
+    - name: "gcr.io"
+      url: "https://gcr.io"
+    - name: "eu.gcr.io"
+      url: "https://eu.gcr.io"
+    - name: "us.gcr.io"
+      url: "https://us.gcr.io"
+    - name: "asia.gcr.io"
+      url: "https://asia.gcr.io"
+    - name: "quay.io"
+      url: "https://quay.io"
+    - name: "registry.k8s.io"
+      url: "https://registry.k8s.io"
+    - name: "nvcr.io"
+      url: "https://nvcr.io"
+    - name: "code.forgejo.org"
+      url: "https://code.forgejo.org"
   # Trivy vulnerability scanner
   trivy:
     enabled: true

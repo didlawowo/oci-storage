@@ -18,7 +18,10 @@ tasks:
         sh: git rev-parse --short HEAD
     cmds:
     - docker buildx build --platform linux/amd64 -t fizzbuzz2/oci-storage:{{.COMMIT_SHA}} --push .
-    - 'sed -i "" "s/tag: .*/tag: \"{{.COMMIT_SHA}}\"/" helm/values.yaml'
+    # Replace only the FIRST `tag:` line (the top-level app image, which appears
+    # right after `image:`). Without the `1,/.../` range, sed clobbers redis.image.tag
+    # and trivy.image.tag too.
+    - 'sed -i "" "1,/^  tag: /s/^  tag: .*/  tag: \"{{.COMMIT_SHA}}\"/" helm/values.yaml'
     - echo "Pushed fizzbuzz2/oci-storage:{{.COMMIT_SHA}} and updated helm/values.yaml"
 
   start:

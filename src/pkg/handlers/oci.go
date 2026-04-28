@@ -545,10 +545,11 @@ func (h *OCIHandler) PatchBlob(c *fiber.Ctx) error {
 		return HTTPError(c, 400, "Invalid UUID format")
 	}
 
-	// Check that this upload belongs to this pod (multi-replica safety)
+	// Cross-pod upload tracking: log only. The temp file at GetTempPath(uuid) lives
+	// on the shared data volume (NFS/RWX) and any replica can append/finalize it,
+	// so we don't reject on ownership mismatch.
 	if err := h.uploadTracker.CheckOwnership(c.Context(), uuid); err != nil {
-		h.log.WithError(err).WithField("uuid", uuid).Error("Upload routed to wrong replica")
-		return HTTPError(c, 409, fmt.Sprintf("UPLOAD_INVALID: %s - configure session affinity on your load balancer", err.Error()))
+		h.log.WithError(err).WithField("uuid", uuid).Debug("PATCH on upload owned by another replica (shared storage, allowed)")
 	}
 
 	tempPath := h.pathManager.GetTempPath(uuid)
@@ -629,10 +630,9 @@ func (h *OCIHandler) CompleteUpload(c *fiber.Ctx) error {
 		return HTTPError(c, 400, "Invalid digest format")
 	}
 
-	// Check that this upload belongs to this pod (multi-replica safety)
+	// Cross-pod upload tracking: log only (see PatchBlob for rationale).
 	if err := h.uploadTracker.CheckOwnership(c.Context(), uuid); err != nil {
-		h.log.WithError(err).WithField("uuid", uuid).Error("Upload routed to wrong replica")
-		return HTTPError(c, 409, fmt.Sprintf("UPLOAD_INVALID: %s - configure session affinity on your load balancer", err.Error()))
+		h.log.WithError(err).WithField("uuid", uuid).Debug("PUT on upload owned by another replica (shared storage, allowed)")
 	}
 
 	tempPath := h.pathManager.GetTempPath(uuid)

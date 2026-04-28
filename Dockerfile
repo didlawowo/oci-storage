@@ -28,7 +28,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 # --- Trivy in its own stage so the layer is cached independently of the app build ---
 FROM alpine:latest AS trivy
-ARG TRIVY_VERSION=0.69.3
+ARG TRIVY_VERSION=0.70.0
 ARG TARGETARCH
 RUN apk add --no-cache wget tar && \
     case "${TARGETARCH}" in \
