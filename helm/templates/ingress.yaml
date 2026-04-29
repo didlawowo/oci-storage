@@ -69,10 +69,13 @@ spec:
       services:
         # Direct Service reference: stickiness is provided by sessionAffinity:ClientIP
         # on the K8s Service (works with `docker push`, unlike cookie sticky).
+        # serversTransport: per-route forwardingTimeouts for multi-GB ML pushes
+        # (overrides backend-side response-header timeout — see middleware-traefik.yaml).
         - name: {{ .Values.service.name }}
           port: {{ .Values.service.port }}
           kind: Service
           passHostHeader: true
+          serversTransport: {{ .Release.Name }}-transport
 {{- if .Values.ingress.tls.enabled }}
   tls:
     secretName: {{ .Values.ingress.tls.secretName | default (printf "%s-certificate-tls" .Release.Name) }}

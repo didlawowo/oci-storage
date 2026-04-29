@@ -113,7 +113,7 @@ func setupHandlers(
 	configHandler := handlers.NewConfigHandler(cfg, log)
 	indexHandler := handlers.NewIndexHandler(chartService, pathManager, log, backend)
 	backupHandler := handlers.NewBackupHandler(backupService, log, cfg)
-	cacheHandler := handlers.NewCacheHandler(proxyService, pathManager, log)
+	cacheHandler := handlers.NewCacheHandler(proxyService, pathManager, backend, cfg, log)
 
 	// GC handler - needs concrete ProxyService for GCService
 	var gcHandler *handlers.GCHandler

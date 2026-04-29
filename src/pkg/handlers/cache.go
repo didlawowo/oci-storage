@@ -4,8 +4,12 @@ package handlers
 import (
 	"net/url"
 	"strings"
+	"sync"
+	"time"
 
+	"oci-storage/config"
 	"oci-storage/pkg/interfaces"
+	"oci-storage/pkg/storage"
 	"oci-storage/pkg/utils"
 
 	"github.com/gofiber/fiber/v2"
@@ -16,13 +20,22 @@ type CacheHandler struct {
 	log          *utils.Logger
 	proxyService interfaces.ProxyServiceInterface
 	pathManager  *utils.PathManager
+	backend      storage.Backend
+	cfg          *config.Config
+
+	// usage cache — listing thousands of blobs on NFS is slow, refresh once per minute
+	usageMu        sync.Mutex
+	usageBytes     int64
+	usageRefreshed time.Time
 }
 
 // NewCacheHandler creates a new cache handler
-func NewCacheHandler(proxyService interfaces.ProxyServiceInterface, pathManager *utils.PathManager, log *utils.Logger) *CacheHandler {
+func NewCacheHandler(proxyService interfaces.ProxyServiceInterface, pathManager *utils.PathManager, backend storage.Backend, cfg *config.Config, log *utils.Logger) *CacheHandler {
 	return &CacheHandler{
 		proxyService: proxyService,
 		pathManager:  pathManager,
+		backend:      backend,
+		cfg:          cfg,
 		log:          log,
 	}
 }
@@ -39,7 +52,6 @@ func (h *CacheHandler) GetCacheStatus(c *fiber.Ctx) error {
 
 	state := h.proxyService.GetCacheState()
 
-	// Use real filesystem stats from PVC instead of hardcoded config maxSizeGB
 	response := fiber.Map{
 		"enabled":      true,
 		"totalSize":    state.TotalSize,
@@ -48,13 +60,49 @@ func (h *CacheHandler) GetCacheStatus(c *fiber.Ctx) error {
 		"usagePercent": state.UsagePercent,
 	}
 
-	if diskStats, err := h.pathManager.GetDiskStats(); err == nil {
-		response["diskTotal"] = diskStats.Total
-		response["diskUsed"] = diskStats.Used
-		response["diskAvailable"] = diskStats.Available
+	// Disk usage: sum on-disk blobs + charts (NOT statfs, broken on NFS — see paths.go).
+	// Total = STORAGE_QUOTA_BYTES injected from chart (matches PVC `size`).
+	used := h.computeDiskUsed()
+	total := h.cfg.Storage.QuotaBytes
+	response["diskUsed"] = used
+	if total > 0 {
+		response["diskTotal"] = total
+		response["diskAvailable"] = max(total-used, 0)
 	}
 
 	return c.JSON(response)
+}
+
+// computeDiskUsed returns the on-disk size of blobs + charts, cached for 60s.
+// Cached images (proxy metadata) are NOT summed: their layers live in `blobs/` and would
+// double-count.
+func (h *CacheHandler) computeDiskUsed() int64 {
+	h.usageMu.Lock()
+	defer h.usageMu.Unlock()
+
+	if time.Since(h.usageRefreshed) < time.Minute && !h.usageRefreshed.IsZero() {
+		return h.usageBytes
+	}
+
+	var total int64
+	if entries, err := h.backend.List("blobs"); err == nil {
+		for _, e := range entries {
+			if !e.IsDir {
+				total += e.Size
+			}
+		}
+	}
+	if entries, err := h.backend.List("charts"); err == nil {
+		for _, e := range entries {
+			if !e.IsDir && strings.HasSuffix(e.Name, ".tgz") {
+				total += e.Size
+			}
+		}
+	}
+
+	h.usageBytes = total
+	h.usageRefreshed = time.Now()
+	return total
 }
 
 // ListCachedImages returns all cached images with metadata

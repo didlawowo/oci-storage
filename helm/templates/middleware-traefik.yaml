@@ -1,7 +1,11 @@
 {{- /*
-  Traefik middlewares for HA mode:
-  - buffering    : allow up to 10 GB request body (large blob pushes)
-  - request timeouts handled at Traefik entrypoint level (cluster-wide)
+  Traefik middlewares + ServersTransport for HA mode:
+  - buffering         : allow up to 10 GB request body (large blob pushes)
+  - serversTransport  : per-route forwarding timeouts (overrides backend-side limits
+                        without touching the cluster-wide entrypoint config). Required
+                        for multi-GB ML image pushes where the backend takes minutes
+                        to finalize the blob (sha256 verify + fsync on NFS) before
+                        responding 201 — otherwise Traefik returns 504 Gateway Timeout.
 
   Stickiness for chunked OCI uploads is handled at the K8s Service level via
   sessionAffinity: ClientIP (see service.yaml). Cookie-based stickiness does not
@@ -29,4 +33,21 @@ spec:
     # Same for responses (large blob pulls).
     maxResponseBodyBytes: 10737418240
     memResponseBodyBytes: 10485760
+---
+apiVersion: traefik.io/v1alpha1
+kind: ServersTransport
+metadata:
+  name: {{ .Release.Name }}-transport
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "application.labels" . | nindent 4 }}
+spec:
+  forwardingTimeouts:
+    # Time to establish TCP connection to backend pod.
+    dialTimeout: 30s
+    # Max time to wait for response headers from backend. Default is 0 (no limit) but
+    # some Traefik installs enforce 60s — explicit 30m matches Fiber ReadTimeout/WriteTimeout
+    # in src/cmd/server/main.go and covers fsync of multi-GB blobs on NFS.
+    responseHeaderTimeout: 30m
+    # Keep idle backend conns alive long enough to reuse across chunked PATCH/PUT.
+    idleConnTimeout: 5m
 {{- end }}

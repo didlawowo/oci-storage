@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 )
 
 type PathManager struct {
@@ -82,26 +81,6 @@ func (pm *PathManager) GetCachedImageMetadataPath(name, tag string) string {
 	return filepath.Join("cache", "metadata", safeName+"_"+tag+".json")
 }
 
-// DiskStats contains filesystem usage information for the storage volume.
-type DiskStats struct {
-	Total     int64 `json:"total"`     // Total capacity in bytes
-	Used      int64 `json:"used"`      // Used space in bytes
-	Available int64 `json:"available"` // Available space in bytes
-}
-
-// GetDiskStats returns the actual filesystem capacity and usage for the storage path.
-// This reads the real PVC/disk size instead of relying on hardcoded config values.
-func (pm *PathManager) GetDiskStats() (*DiskStats, error) {
-	var stat syscall.Statfs_t
-	if err := syscall.Statfs(pm.baseStoragePath, &stat); err != nil {
-		return nil, fmt.Errorf("failed to stat filesystem at %s: %w", pm.baseStoragePath, err)
-	}
-	total := int64(stat.Blocks) * int64(stat.Bsize)
-	available := int64(stat.Bavail) * int64(stat.Bsize)
-	used := total - available
-	return &DiskStats{
-		Total:     total,
-		Used:      used,
-		Available: available,
-	}, nil
-}
+// Disk usage stats are computed by handlers/cache.go (sum of on-disk blobs + charts).
+// statfs() was removed because on NFS mounts it reports the underlying server volume
+// (whole Synology pool), not the PVC-declared capacity, producing nonsense %.

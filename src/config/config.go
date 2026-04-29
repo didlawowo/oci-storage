@@ -120,6 +120,12 @@ type Config struct {
 
 	Storage struct {
 		Path string `yaml:"path"`
+		// QuotaBytes is the declared capacity of the storage volume in bytes.
+		// On NFS mounts statfs() reports the underlying server's filesystem size, not the
+		// PVC-declared capacity, so disk usage % is meaningless. This value comes from the
+		// chart (matches PVC `size`) and is exposed via the STORAGE_QUOTA_BYTES env var.
+		// 0 means "unknown" (UI falls back to summed blob/chart sizes only).
+		QuotaBytes int64 `yaml:"quotaBytes"`
 	} `yaml:"storage"`
 
 	Logging struct {
@@ -179,6 +185,11 @@ func loadConfigFromEnv(config *Config) {
 	// if storagePath := os.Getenv("STORAGE_PATH"); storagePath != "" {
 	// 	config.Storage.Path = storagePath
 	// }
+	if v := os.Getenv("STORAGE_QUOTA_BYTES"); v != "" {
+		if q, err := strconv.ParseInt(v, 10, 64); err == nil {
+			config.Storage.QuotaBytes = q
+		}
+	}
 
 	// Paramètres de logging
 	if logLevel := os.Getenv("LOG_LEVEL"); logLevel != "" {

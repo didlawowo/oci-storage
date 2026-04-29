@@ -55,3 +55,28 @@ Single-flight on proxy pulls is also disabled. We allow it but warn loudly.
 {{- if and (gt (int .Values.replicas) 1) (not .Values.redis.enabled) -}}
 {{- /* warning printed via NOTES, not a hard fail */ -}}
 {{- end -}}
+
+{{/*
+Convert the first PVC's `size` (e.g. "200Gi", "500M", "2Ti") to bytes.
+Exposed via STORAGE_QUOTA_BYTES env var so the app can report a meaningful disk %
+even when statfs() lies (NFS mounts always report the underlying server volume size).
+Returns 0 (= "unknown", UI hides the bar) if no PVC is declared or size unparseable.
+*/}}
+{{- define "oci-storage.storageQuotaBytes" -}}
+{{- $size := "" -}}
+{{- if .Values.persistentVolumesClaims -}}
+  {{- $size = (index .Values.persistentVolumesClaims 0).size -}}
+{{- end -}}
+{{- if not $size -}}0{{- else -}}
+  {{- /* Strip the suffix and multiply. Helm's `int64` returns 0 on failure. */ -}}
+  {{- if hasSuffix "Ki" $size -}}{{- mul (trimSuffix "Ki" $size | int64) 1024 -}}
+  {{- else if hasSuffix "Mi" $size -}}{{- mul (trimSuffix "Mi" $size | int64) 1048576 -}}
+  {{- else if hasSuffix "Gi" $size -}}{{- mul (trimSuffix "Gi" $size | int64) 1073741824 -}}
+  {{- else if hasSuffix "Ti" $size -}}{{- mul (trimSuffix "Ti" $size | int64) 1099511627776 -}}
+  {{- else if hasSuffix "K" $size -}}{{- mul (trimSuffix "K" $size | int64) 1000 -}}
+  {{- else if hasSuffix "M" $size -}}{{- mul (trimSuffix "M" $size | int64) 1000000 -}}
+  {{- else if hasSuffix "G" $size -}}{{- mul (trimSuffix "G" $size | int64) 1000000000 -}}
+  {{- else if hasSuffix "T" $size -}}{{- mul (trimSuffix "T" $size | int64) 1000000000000 -}}
+  {{- else -}}{{- $size | int64 -}}{{- end -}}
+{{- end -}}
+{{- end -}}

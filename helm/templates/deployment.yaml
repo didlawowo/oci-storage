@@ -60,6 +60,11 @@ spec:
           {{- with .Values.env }}
             {{- toYaml . | nindent 12 }}
           {{- end }}
+            # Storage quota in bytes — used by /cache/status to compute %
+            # (statfs() lies on NFS mounts; this is the PVC-declared capacity).
+            # Resolved from the first persistentVolumeClaim's `size` value.
+            - name: STORAGE_QUOTA_BYTES
+              value: {{ include "oci-storage.storageQuotaBytes" . | quote }}
           {{- if .Values.s3.enabled }}
             - name: S3_ENABLED
               value: "true"
